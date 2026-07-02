@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v8.0.7</title>
+<title>Draft Solver v8.1.4</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -129,7 +129,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        for the user to tell which build they're on, and (b) can let an incompatible old auto-save
        load as if nothing changed. Bump on every patch, no matter how small.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.0.7</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.1.4</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -287,9 +287,9 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           <option value="slow">Very Slow &mdash; fully exhaustive (not recommended)</option>
         </select>
         <p class="tiny" style="margin:4px 0 0">Controls only how hard the <b>bench picks</b> are searched &mdash; it never changes your starting XI (the <b>Rating Ceiling</b> above is the XI lever). Higher tiers add confidence, rarely a different answer. <b>Very Slow</b> can be extremely slow on complex drafts for little benefit.</p>
-        <label class="tiny" style="display:block;margin-top:10px">Manager depth &mdash; share of ties given true +2/+1 analysis: <b id="mgrDepthLbl">off</b></label>
-        <input type="range" id="mgrDepth" min="0" max="1" step="0.05" value="0" style="width:100%" oninput="_updMgrDepthLbl()" onchange="saveAdvSettings();_solveCache=null;">
-        <p class="tiny" style="margin:4px 0 0">0 = none (clean +2 only), 1 = every tie, in between that share &mdash; best ties first. Independent of the bench setting above.</p>
+        <label class="tiny" style="display:block;margin-top:10px">Manager depth &mdash; ties given true +2/+1 analysis: <b id="mgrDepthLbl">5%</b></label>
+        <input type="range" id="mgrDepth" min="0" max="1" step="0.05" value="0.05" style="width:100%" oninput="_updMgrDepthLbl()" onchange="saveAdvSettings();_solveCache=null;">
+        <p class="tiny" style="margin:4px 0 0">0 = none (clean +2 only), 1 = every tie &mdash; best ties first, scaling up geometrically in between so small tie counts aren't starved and large ones aren't swamped. Independent of the bench setting above.</p>
       </div>
       <button class="btn gho sm" style="margin-top:14px" onclick="resetAdvSettings()">&#8635; Reset solver settings to defaults</button>
 
@@ -2106,7 +2106,7 @@ function resetAdvSettings(){
   const rc=$('#ratingCeilSlider');if(rc)rc.value=10;   // 95
   const nc=$('#nodeCapInput');if(nc)nc.value=5;        // 5M
   const bm=$('#benchMode');if(bm)bm.value='vfast';     // Very Fast bench
-  const md=$('#mgrDepth');if(md)md.value='0';_updMgrDepthLbl(); // manager depth off
+  const md=$('#mgrDepth');if(md)md.value='0.05';_updMgrDepthLbl(); // manager depth 5% default
   const ts=$('#targetScore');if(ts)ts.value='';        // target off
   if(typeof updateRatingCeilLabel==='function')updateRatingCeilLabel();
   saveAdvSettings();_solveCache=null;
@@ -2682,8 +2682,13 @@ let _benchNodeAcc=0,_slowConfirmed=false,_benchAbort=false,_benchTotalCombos=nul
 let _mgrNodeAcc=0,_mgrPromptConfirmed=false,_mgrAbort=false,_mgrTieIdx=0,_mgrTieTotal=0; // manager pass meter — same currency+prompt system as the bench pass, because with all ties analysed at medium/slow, N ties x the per-tie cap has exactly the same blow-up shape the bench had // bench-only node budget guard (10M prompt below); manager checks are entirely separate and never touch this
 function _benchMode(){const el=$('#benchMode');return el&&el.value?el.value:'vfast';}
 function _mgrFrac(){const el=$('#mgrDepth');const v=el?parseFloat(el.value):0;return isFinite(v)?Math.min(1,Math.max(0,v)):0;}
-function _mgrDepthCount(total){const f=_mgrFrac();if(f<=0||!total)return 0;if(f>=1)return total;return Math.max(1,Math.min(total,Math.round(f*total)));}
-function _updMgrDepthLbl(){const l=$('#mgrDepthLbl');if(!l)return;const f=_mgrFrac();l.textContent=f<=0?'off':f>=1?'all ties':Math.round(f*100)+'% of ties (min 1)';}
+// Geometric (not linear) interpolation between 0 and total: depthN = total^f. Endpoints are
+// unchanged (f=0 -> 0, f=1 -> total), but the curve is front-loaded for SMALL tie counts (e.g. going
+// from 1 to 2 of 3 ties no longer needs a slider push past 50-60%) while staying compressed for LARGE
+// tie counts (5% of 1000 ties is ~1 tie, not a flat 50) -- a literal fraction*total map was both too
+// harsh at the low end on small drafts and too generous at the low end on big ones.
+function _mgrDepthCount(total){const f=_mgrFrac();if(f<=0||!total)return 0;if(f>=1)return total;return Math.max(1,Math.min(total,Math.round(Math.pow(total,f))));}
+function _updMgrDepthLbl(){const l=$('#mgrDepthLbl');if(!l)return;const f=_mgrFrac();l.textContent=f<=0?'off':f>=1?'all ties':Math.round(f*100)+'%';}
 function _speedMode(){return _benchMode();} // legacy alias
 function _lexGt(a,b){for(let i=0;i<a.length;i++){if(a[i]!==b[i])return a[i]>b[i];}return false;}
 // The manager twin of _maybeSlowPrompt: one PASS-scope meter across every tie's manager-depth solve.
@@ -3195,26 +3200,66 @@ function _mgrSubs(xi,mainXI,form){
   // doesn't say which CM.
   const oldIds=new Set(mainXI.filter(Boolean).map(c=>c.id));
   const newIds=new Set(xi.filter(Boolean).map(c=>c.id));
-  const outCards=mainXI.filter(c=>c&&!newIds.has(c.id));
+  // Keep each outgoing card paired with the slot IT actually played, not just array order. A sub can be
+  // triggered by a chain (e.g. card A drops from CB, card B repositions CB<-RB to fill A's spot, and the
+  // new sub lands in B's now-empty RB) — in that case the incoming card's own landing slot (s.slot) is NOT
+  // the slot the outgoing card played (s.outSlot). Both are kept on the sub record; _renderMgr decides
+  // which to print — see _repoLines/the subs.map() below for the "only show 'at' when unambiguous" rule.
+  const outCards=[];mainXI.forEach((c,i)=>{if(c&&!newIds.has(c.id))outCards.push({c,slot:form.slots[i],idx:i});});
   const subs=[];
   for(let i=0;i<form.slots.length;i++){
     const inC=xi[i];
-    if(inC&&!oldIds.has(inC.id)){subs.push({slot:form.slots[i],inC,outC:outCards.shift()||null});}
+    if(inC&&!oldIds.has(inC.id)){const outEntry=outCards.shift()||null;subs.push({slot:form.slots[i],slotIdx:i,inC,outC:outEntry?outEntry.c:null,outSlot:outEntry?outEntry.slot:null,outSlotIdx:outEntry?outEntry.idx:null});}
   }
   const repositions=[];
   for(let i=0;i<form.slots.length;i++){
     const c=xi[i];
-    if(c&&oldIds.has(c.id)){const oi=mainXI.findIndex(m=>m&&m.id===c.id);if(oi!==-1&&oi!==i)repositions.push({card:c,fromSlot:form.slots[oi],toSlot:form.slots[i],fromIdx:oi});}
+    if(c&&oldIds.has(c.id)){const oi=mainXI.findIndex(m=>m&&m.id===c.id);if(oi!==-1&&oi!==i)repositions.push({card:c,fromSlot:form.slots[oi],toSlot:form.slots[i],fromIdx:oi,toIdx:i});}
   }
   // Resolve the swap partner for each reposition: whoever now occupies the slot this card just
   // vacated. Doing it as a second pass (after the full repositions list is built) means it's correct
-  // even for longer rotations (A->B->C->A), not just simple two-card swaps. Only counts as a "swap"
-  // if the partner is another EXISTING XI card being repositioned — if a freshly subbed-in card
-  // happens to land in the vacated slot, that's already reported by its own "sub IN" line, so it's
-  // shown as a plain "move" here instead of a confusing/duplicate "swap with the new sub" line.
+  // even for longer rotations (A->B->C->A), not just simple two-card swaps. partnerIsExisting marks
+  // whether that partner is another EXISTING XI card also being repositioned (vs. a freshly subbed-in
+  // card landing in the vacated slot — already named on its own "sub IN" line). _repoLines (in
+  // _renderMgr) walks these partner links to group full rotations into one line instead of one
+  // line per hop, and to collapse a plain two-card swap to a single line instead of two.
   repositions.forEach(r=>{const p=xi[r.fromIdx];r.partner=(p&&p.id!==r.card.id)?p:null;r.partnerIsExisting=r.partner?oldIds.has(r.partner.id):false;}); // partner is always named (existing card or fresh sub) so a swap is never ambiguous
   subs.repositions=repositions;
+  // Same-name duplicate check, scoped to the full XI (old + new arrangement combined) — the only cards
+  // that can ever be mentioned in this tail text. A name shared with something sitting unused on the
+  // bench never appears here, so it's not worth flagging; a name shared by two DIFFERENT cards (distinct
+  // ids) inside the old or new XI would otherwise make "swap Thiaw with Thiaw" genuinely ambiguous.
+  subs.dupNames=(()=>{
+    const byLabel=new Map(),seen=new Set();
+    const tally=c=>{if(!c||seen.has(c.id))return;seen.add(c.id);byLabel.set(c.label,(byLabel.get(c.label)||0)+1);};
+    mainXI.forEach(tally);xi.forEach(tally);
+    const dup=new Set();byLabel.forEach((n,label)=>{if(n>1)dup.add(label);});
+    return dup;
+  })();
+  subs.form=form;
   return subs;
+}
+// Slot label for disambiguation purposes: bare label ("CB") if the formation only has one of that
+// slot; label+rank ("CB1"/"CB2"/"CB3") if it has three or more (numbering stays unambiguous for any
+// count); but for the common exactly-TWO case, standard football shorthand (LCB/RCB) reads far more
+// naturally than "CB1"/"CB2" — so use it wherever this formation's line-up puts exactly two of a
+// mappable position. Formation strings (FORMS) are always written left-to-right on the pitch (e.g.
+// "GK LB CB CB RB"), so the first occurrence is genuinely the left one and the second the right one.
+const _LR_MAP={CB:['LCB','RCB'],CM:['LCM','RCM'],CAM:['LAM','RAM'],ST:['LS','RS'],CDM:['LDM','RDM']};
+function _slotTag(form,idx){
+  const lbl=form.slots[idx];
+  const count=form.slots.filter(s=>s===lbl).length;
+  if(count<=1)return lbl;
+  let rank=0;for(let j=0;j<=idx;j++){if(form.slots[j]===lbl)rank++;}
+  if(count===2&&_LR_MAP[lbl])return _LR_MAP[lbl][rank-1];
+  return lbl+rank;
+}
+// Renders a card's name, tagged with its exact slot ("Thiaw (CB1)") only when that name is shared by
+// another, different card somewhere in this XI — otherwise just the plain name, since tagging every
+// mention regardless would be noise for the overwhelming majority of drafts with no name collisions.
+function _nm(c,idx,form,dup){
+  const base='<b>'+esc(c.label)+'</b>';
+  return (dup&&dup.has(c.label))?(base+' <span class="tiny" style="color:var(--mut)">('+_slotTag(form,idx)+')</span>'):base;
 }
 function _mgrCapWarn(cap,exact){
   const nextCap=cap*3;
@@ -3226,6 +3271,48 @@ function _mgrCapWarn(cap,exact){
     +'<button class="btn gho sm" onclick="this.closest(\'.note\').remove()">Accept</button>'
     +'</div></div>';
 }
+// Turns the flat `repositions` list into <li> lines, walking partner links so every card's move is
+// stated exactly once. A plain two-card swap (A<->B, closed loop of length 2) collapses to one line
+// naming both. A longer closed rotation (A->B->C->A) used to print one redundant "swap X with Y" line
+// per hop — same three final positions stated three times over. This walks the chain and prints ONE
+// "rotate" line naming every card and its final slot instead. Open chains (a repositioning card whose
+// vacated slot is filled by a freshly subbed-in card, not another repositioning card) are NOT collapsed:
+// each hop there is already a distinct, non-redundant fact, so each stays its own line.
+function _repoLines(repos,form,dup){
+  const byCard=new Map();repos.forEach(r=>byCard.set(r.card.id,r));
+  // Tag every mention by the card's ORIGINAL (pre-change) slot, never its destination. _slotTag's
+  // index->tag mapping is a fixed bijection for a given formation, so tagging by destination let a
+  // repositioning card inherit the exact same tag as an unrelated same-named card that used to occupy
+  // that slot and has since been subbed out entirely — e.g. renaming a card to "Thiaw" while a
+  // different Thiaw gets subbed out of CB made the renamed card ALSO read as "(CB1)" the moment it
+  // swapped into CB, even though it started the draft at RB and the CB1 tag was already "claimed" by
+  // the departing card. Origin-slot tagging is collision-free by construction: every mainXI slot index
+  // belongs to exactly one card, so two distinct dupe-name cards can never share a tag.
+  const origIdx=r=>r.fromIdx;
+  const partnerIdx=r=>r.partnerIsExisting?byCard.get(r.partner.id).fromIdx:r.fromIdx; // existing partner: ITS OWN original slot; fresh sub: its only slot (=r.fromIdx, where it lands)
+  const visited=new Set(),lines=[];
+  repos.forEach(r0=>{
+    if(visited.has(r0.card.id))return;
+    const chain=[r0];visited.add(r0.card.id);
+    let cur=r0;
+    while(cur.partner&&cur.partnerIsExisting&&byCard.has(cur.partner.id)&&cur.partner.id!==r0.card.id&&!visited.has(cur.partner.id)){
+      const nxt=byCard.get(cur.partner.id);chain.push(nxt);visited.add(nxt.card.id);cur=nxt;
+    }
+    const closesCycle=!!(cur.partner&&cur.partnerIsExisting&&cur.partner.id===r0.card.id);
+    if(closesCycle&&chain.length>=3){
+      lines.push('<li>rotate '+chain.map(r=>_nm(r.card,origIdx(r),form,dup)+' (\u2192 '+r.toSlot+')').join(' \u2192 ')+'</li>');
+    } else if(closesCycle&&chain.length===2){                 // plain mutual swap - one line covers both sides
+      lines.push('<li>swap '+_nm(r0.card,origIdx(r0),form,dup)+' (\u2192 '+r0.toSlot+') with '+_nm(r0.partner,partnerIdx(r0),form,dup)+' (\u2192 '+r0.fromSlot+')</li>');
+    } else {
+      chain.forEach(r=>{
+        lines.push(r.partner
+          ?('<li>swap '+_nm(r.card,origIdx(r),form,dup)+' (\u2192 '+r.toSlot+') with '+_nm(r.partner,partnerIdx(r),form,dup)+' (\u2192 '+r.fromSlot+')</li>')
+          :('<li>swap '+_nm(r.card,origIdx(r),form,dup)+' into '+r.toSlot+' (from '+r.fromSlot+')</li>'));
+      });
+    }
+  });
+  return lines.join('');
+}
 function _renderMgr(m,total,gain,subs,sc,capped,cap,exact){
   let tail;
   if(gain===2&&!subs.length){
@@ -3233,18 +3320,16 @@ function _renderMgr(m,total,gain,subs,sc,capped,cap,exact){
   } else if(subs.length||(subs.repositions&&subs.repositions.length)){
     const repos=subs.repositions||[];const nMoves=subs.length+repos.length;
     tail='<div class="tiny flag" style="margin-top:6px"><b>To reach '+total+' with '+esc(m.name||m.nation)+'</b>, '+(nMoves>1?'make these changes:':'make this change:')+'<ul style="margin:4px 0 0 16px;padding:0">'
-      +subs.map(s=>s.outC?('<li>sub IN <b>'+esc(s.inC.label)+'</b> ('+s.inC.rating+') for <b>'+esc(s.outC.label)+'</b> at '+s.slot+'</li>'):('<li>sub IN <b>'+esc(s.inC.label)+'</b> ('+s.inC.rating+') at '+s.slot+'</li>')).join('')
-      +(()=>{const seen=new Set();return repos.map(r=>{
-        if(r.partner){
-          if(r.partnerIsExisting){                       // genuine two-card swap - report it once, from one side only
-            const key=[r.card.id,r.partner.id].sort().join('-');
-            if(seen.has(key))return '';
-            seen.add(key);
-          }
-          return '<li>swap <b>'+esc(r.card.label)+'</b> (\u2192 '+r.toSlot+') with <b>'+esc(r.partner.label)+'</b> (\u2192 '+r.fromSlot+')</li>';
-        }
-        return '<li>swap <b>'+esc(r.card.label)+'</b> into '+r.toSlot+' (from '+r.fromSlot+')</li>';
-      }).join('');})()+'</ul></div>';
+      // "at outSlot" is only shown when it's unambiguous, i.e. it's also where the incoming card actually
+      // lands (s.slot===s.outSlot). When a reposition chain puts someone else in that slot instead, s.slot
+      // and s.outSlot differ — printing outSlot there would misname the incoming card's real position, and
+      // printing slot there would just repeat what the swap/rotate line below already says. So: drop it,
+      // and let that line be the single source of truth for where this card ends up.
+      +subs.map(s=>s.outC?(s.slot===s.outSlot
+          ?('<li>sub IN '+_nm(s.inC,s.slotIdx,subs.form,subs.dupNames)+' ('+s.inC.rating+') for '+_nm(s.outC,s.outSlotIdx,subs.form,subs.dupNames)+' at '+s.outSlot+'</li>')
+          :('<li>sub IN '+_nm(s.inC,s.slotIdx,subs.form,subs.dupNames)+' ('+s.inC.rating+') for '+_nm(s.outC,s.outSlotIdx,subs.form,subs.dupNames)+'</li>'))
+        :('<li>sub IN '+_nm(s.inC,s.slotIdx,subs.form,subs.dupNames)+' ('+s.inC.rating+') at '+s.slot+'</li>')).join('')
+      +_repoLines(repos,subs.form,subs.dupNames)+'</ul></div>';
   } else {
     tail='<div class="tiny flag" style="margin-top:6px">Best this manager gives here is +'+gain+', and no re-arrangement of your cards beats it \u2014 a dud for this draft.</div>';
   }
