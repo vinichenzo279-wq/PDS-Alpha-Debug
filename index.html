@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v8.0.1</title>
+<title>Draft Solver v8.0.3</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -129,7 +129,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        for the user to tell which build they're on, and (b) can let an incompatible old auto-save
        load as if nothing changed. Bump on every patch, no matter how small.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.0.1</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.0.3</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -1581,6 +1581,7 @@ function addPlayerToSlot(){
   if(editingId){const ex=cards.find(x=>x.id===editingId);if(ex)Object.assign(ex,c);editingId=null;}
   else{
     if(slotCards(s.id).length>=5){err.textContent='Max 5 per slot.';return;}
+    if(s.id!=='CAP')clearAbandonedCaptainPick(); // leaving the captain slot unchosen + picking elsewhere drops the stray CAP candidates
     cards.push(Object.assign({id:uid++,slot:s.id,hold:null},c));
   }
   s.busted=false;syncSlot(s.id);_clearSolve();
@@ -1617,6 +1618,10 @@ function placeCaptain(id,pos){
   document.querySelector('.tabbar button[data-v="v-cards"]').click();
 }
 function cancelCaptain(){cards=cards.filter(x=>x.slot!=='CAP');_capPick=null;activeSlot=null;editingId=null;_clearSolve();renderCards();}
+// Same "wipe any stray CAP candidates" logic as cancelCaptain, minus the nav/render side-effects —
+// used to silently drop an unchosen captain pick the moment the user commits a card to another slot,
+// so those never-picked candidates stop being considered for clash purposes.
+function clearAbandonedCaptainPick(){if(cards.some(c=>c.slot==='CAP')){cards=cards.filter(x=>x.slot!=='CAP');_capPick=null;}}
 function clearCards(){if(!board)return;if(confirm('Clear all picks, managers, the current solve, and reset the formation selection?')){cards=[];managers=[];board=null;chosenForm=null;activeSlot=null;editingId=null;_clearSolve();renderCards();renderMgr();$('#m-name').value='';$('#m-name-list').classList.remove('open');updateSolveForm();sortForm($('#fgrid').dataset.m||'rank');saveLocal();}}
 function typLabel(t){return t==='icon'?'ICON':t==='hero'?'HERO':'PREM'}
 function cardMeta(c){
@@ -2363,6 +2368,24 @@ function _handleSolveResult(r,cap,form,ms,out){
   $('#mgrPanel').style.display='block';
   applyTie(A.bi);
 }
+// Re-picks the winning tie using the exact same tiebreak _analyzeTies uses (true +2 count -> true +1
+// count -> exact rating -> clean +2), but scoped to whatever's currently in ctx.analyses. Needed because
+// _reanalyze/_reanalyzeTie can change a single tie's analysis after the initial winner was picked, and
+// without this the star "(winner)" badge just keeps pointing at the stale pre-reanalysis leader.
+function _recomputeWinnerIdx(ties,analyses){
+  const cleans=ties.map(t=>cleanMgrCount(t.sc));
+  const leaderFallback=()=>{const leader=Math.max.apply(null,cleans);let bi=0,_bx=-Infinity;
+    ties.forEach((t,i)=>{if(cleans[i]===leader&&t.sc.ratingExact>_bx){_bx=t.sc.ratingExact;bi=i;}});return bi;};
+  if(!analyses||!analyses.some(a=>a&&a.analyzed))return leaderFallback();
+  let best=null;
+  ties.forEach((t,i)=>{const a=analyses[i];if(!a||!a.analyzed)return;const tc=a.clean+a.subbed2,rx=t.sc.ratingExact,cl=a.clean;
+    if(!best
+      ||tc>best.tc
+      ||(tc===best.tc&&a.plus1>best.p1)
+      ||(tc===best.tc&&a.plus1===best.p1&&rx>best.rx)
+      ||(tc===best.tc&&a.plus1===best.p1&&rx===best.rx&&cl>best.cl))best={i,tc,p1:a.plus1,rx,cl};});
+  return best?best.i:leaderFallback();
+}
 function _reanalyze(which,cap){
   const ctx=window._solveCtx;if(!ctx||!ctx.ties)return;
   const _run=()=>{
@@ -2373,7 +2396,9 @@ function _reanalyze(which,cap){
       prevAnalyses:ctx.analyses,prevMgrCapped:ctx.mgrCapped
     });
     ctx.analyses=A.analyses;ctx.benchData=A.benchData;ctx.benchCapped=A.benchCapped;ctx.benchAborted=A.benchAborted;ctx.tiesCapped=A.tiesCapped;ctx.tiesAborted=A.tiesAborted;ctx.tiesTotal=A.tiesTotal;ctx.benchPassNodes=A.benchPassNodes;ctx.mgrCapped=A.mgrCapped;ctx.mgrPassNodes=A.mgrPassNodes;ctx.mgrTiesAborted=A.mgrTiesAborted;ctx.benchCap=A.benchCap;ctx.mgrCap=A.mgrCap;
-    _hideSolverOverlay();applyTie(ctx.cur); // keep the user on their current tie
+    ctx.winnerIdx=_recomputeWinnerIdx(ctx.ties,ctx.analyses); // the escalated analyses may have changed which tie actually wins
+    if(ctx.winnerIdx!==ctx.cur)ctx.cur=ctx.winnerIdx; // this is a global (all-ties) escalation, not a single-tie one: follow the new winner
+    _hideSolverOverlay();applyTie(ctx.cur);
   };
   if(cap>150000000){                                        // deep/forever: same count-warning as the main solve, but against THIS search's own count
     // Use bench's own ESTIMATED TOTAL NODE count (same math as the progress text) or managers' own
@@ -2438,6 +2463,7 @@ function _reanalyzeTie(escalate){
     // vanished for good the moment you viewed another tie. Now applyTie re-injects it from this cache.
     ctx.tieWarn=ctx.tieWarn||{};
     ctx.tieWarn[cur]=capped?_tieCapWarn(Math.max(tc.bench,tc.mgr),bd.combos,an&&an.exact,bd.nodes,bd.combosChecked,bd.mode,bd.unitsChecked,bd.unitsTotal,!!bd.capped,!!(an&&an.capped),bd.proofCeil,an&&an.nodes):null;
+    ctx.winnerIdx=_recomputeWinnerIdx(ctx.ties,ctx.analyses); // this tie's fresh analysis may now beat (or lose to) the previous winner
     _hideSolverOverlay();applyTie(cur); // keep the user on their current tie; applyTie re-injects the cached box
   };
   if(tc.bench>150000000||tc.mgr>150000000){
