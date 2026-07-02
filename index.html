@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v8.0.3</title>
+<title>Draft Solver v8.0.6</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -129,7 +129,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        for the user to tell which build they're on, and (b) can let an incompatible old auto-save
        load as if nothing changed. Bump on every patch, no matter how small.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.0.3</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.0.6</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -1592,7 +1592,7 @@ function addPlayerToSlot(){
   const _se=$('#slotEditor');if(_se&&_se.scrollIntoView)setTimeout(()=>_se.scrollIntoView({behavior:'smooth',block:'start'}),120);
 }
 function delCard(id){const c=cards.find(x=>x.id===id);cards=cards.filter(x=>x.id!==id);if(c&&c.slot)syncSlot(c.slot);_clearSolve();if(editingId===id){editingId=null;resetForm();}if(activeSlot)renderSlotEditor();else renderCards();refreshLog();}
-function bustSlot(){const s=slotById(activeSlot);if(!s)return;cards=cards.filter(c=>c.slot!==s.id);s.busted=true;_clearSolve();closeSlot();saveLocal();}
+function bustSlot(){const s=slotById(activeSlot);if(!s)return;cards=cards.filter(c=>c.slot!==s.id);s.busted=true;if(s.id!=='CAP')clearAbandonedCaptainPick();_clearSolve();closeSlot();saveLocal();}
 function resetSlot(){const s=slotById(activeSlot);if(!s)return;cards=cards.filter(c=>c.slot!==s.id);s.busted=false;editingId=null;_clearSolve();resetForm();renderSlotEditor();refreshLog();}
 /* ---- captain: a separate first pick, always committed into a position slot, never benched ---- */
 function pickCaptain(){
@@ -3359,7 +3359,7 @@ function posScarceN(p){
   const c=(POS_COUNT[p]||0); // position not in DB at all → count 0 → rarest
   return Math.max(0,Math.min(1,1-(c-minC)/(maxC-minC)));
 }
-function ratingN(r){return Math.max(0,Math.min(1,(Math.max(75,Math.min(99,r))-75)/24));} // 75->0, 99->1, clamped
+function ratingN(r){return (r-75)/24;} // 75->0, 99->1, uncapped in both directions so sub-75 and 100+ ratings keep scaling instead of flattening
 /* tunable weights for the helper */
 const HW_DEF={icon:12,hero:10,normalBase:8,nation:2.0,heroLeague:1.5,clubRarity:2.5,rating:2.5,posScarce:1.0,posFlex:0.5,clashAvoid:1.0,posNeed:0,premHeroPenalty:10};
 const HW_LABEL={icon:'Icon base value',hero:'Hero base value',normalBase:'Normal base value',rating:'Rating weight',nation:'Nation rarity weight',heroLeague:'Hero-league rarity weight',clubRarity:'Prem-club rarity weight',posScarce:'Scarce-position bonus',posFlex:'Position-flexibility bonus',posNeed:'Fill-needed-position bonus (squad mode)',clashAvoid:'Avoid-clashes weight (squad mode)',premHeroPenalty:'Prem-hero penalty'};
