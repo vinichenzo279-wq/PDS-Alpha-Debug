@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v7.9.11</title>
+<title>Draft Solver v7.10.4</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -129,7 +129,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        for the user to tell which build they're on, and (b) can let an incompatible old auto-save
        load as if nothing changed. Bump on every patch, no matter how small.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v7.9.11</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v7.10.4</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:4px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -885,7 +885,7 @@ function canonClub(c){if(!c)return c;const ex=CLUBS.find(x=>x.toLowerCase()===c.
 function canonLeague(l){if(!l)return 'England Premier League';const ex=LEAGUE_NAMES.find(x=>x.toLowerCase()===l.toLowerCase());if(ex)return ex;const a=LEAGUE_ALIAS[l.toLowerCase()];return a||l;}
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-function norm(s){return String(s).toLowerCase().replace(/['\u2019\u2018\u02bc]/g,'').normalize('NFD').replace(/\p{Diacritic}/gu,'').replace(/ue/g,'u').replace(/oe/g,'o').replace(/ae/g,'a');}
+function norm(s){return String(s).toLowerCase().replace(/['\u2019\u2018\u02bc\s\-\u2010-\u2015\u2212]/g,'').normalize('NFD').replace(/\p{Diacritic}/gu,'').replace(/ue/g,'u').replace(/oe/g,'o').replace(/ae/g,'a');}
 // A trailing number in a search is a RATING filter ("van dijk 90" -> name "van dijk", rating 90).
 // Player names never contain digits, so any trailing integer is unambiguous.
 function splitNameRating(raw){const t=String(raw).trim();const m=t.match(/^(.+?)\s+(\d{1,3})$/);if(m)return{f:norm(m[1]),r:+m[2]};const mn=t.match(/^(\d{1,3})$/);if(mn)return{f:'',r:+mn[1]};return{f:norm(t),r:null};}
@@ -1581,6 +1581,10 @@ function addPlayerToSlot(){
   }
   s.busted=false;syncSlot(s.id);_clearSolve();
   resetForm();renderSlotEditor();refreshLog();
+  // Mirror of the name-autofill scroll (which goes DOWN to this button): after the add, take the user
+  // back UP to the top of the slot editor so the next entry starts from the name field. Same deferred
+  // timing for the mobile keyboard-close viewport shift.
+  const _se=$('#slotEditor');if(_se&&_se.scrollIntoView)setTimeout(()=>_se.scrollIntoView({behavior:'smooth',block:'start'}),120);
 }
 function delCard(id){const c=cards.find(x=>x.id===id);cards=cards.filter(x=>x.id!==id);if(c&&c.slot)syncSlot(c.slot);_clearSolve();if(editingId===id){editingId=null;resetForm();}if(activeSlot)renderSlotEditor();else renderCards();refreshLog();}
 function bustSlot(){const s=slotById(activeSlot);if(!s)return;cards=cards.filter(c=>c.slot!==s.id);s.busted=true;_clearSolve();closeSlot();saveLocal();}
@@ -2000,7 +2004,7 @@ function _renderEmergencyFillInner(form,cap){
       // scoped to the coverable slots only — solveBest can't legally fill the OOP ones anyway, so
       // asking it to try would just error out. The OOP cards themselves stay in the pool as spares.
       const tie={xi:em.pick.filter(Boolean),sc:emSc};
-      _benchNodeAcc=0;_slowConfirmed=false;_benchAbort=false; // same reset _analyzeTies does before calling computeBenchPicks
+      _benchNodeAcc=0;_slowConfirmed=false;_benchAbort=false;_benchTieIdx=1;_benchTieTotal=1; // same reset _analyzeTies does before calling computeBenchPicks
       const bd=computeBenchPicks(tie,em.subForm,_speedMode());
       subPicks=bd.subPicks;benchCapped=!!bd.capped;
     } else {
@@ -2259,7 +2263,8 @@ function _analyzeTies(r,form,opts){
     benchData=r.bestXIs.map(()=>null);benchCapped=false;
     const order=r.bestXIs.map((t,i)=>i).sort((a,b)=>cleans[b]-cleans[a]);
     const _sig=b=>(b&&b.bench)?b.bench.map(x=>x.c.id).join(','):'';
-    order.forEach(i=>{const bd=computeBenchPicks(r.bestXIs[i],form,mode);
+    _benchTieTotal=order.length;
+    order.forEach((i,_oi)=>{_benchTieIdx=_oi+1;const bd=computeBenchPicks(r.bestXIs[i],form,mode);
       const prev=opts.prevBenchData&&opts.prevBenchData[i];
       if(!prev||_sig(prev)!==_sig(bd))benchChanged.add(i);   // this tie's picks changed vs the previous pass
       benchData[i]=bd;if(bd.capped)benchCapped=true;});
@@ -2273,7 +2278,16 @@ function _analyzeTies(r,form,opts){
     r.bestXIs.forEach((t,i)=>{if(cleans[i]===leader&&t.sc.ratingExact>_bx){_bx=t.sc.ratingExact;bi=i;}}); // tie on clean +2 -> exact rating
   }else{
     let depthIdx;
-    if(mode==='fast'){const leader=Math.max.apply(null,cleans);depthIdx=order.filter(i=>leader-cleans[i]<=2).slice(0,10);}
+    if(mode==='fast'){
+      // Analyse every tie "reasonably close" to the clean-+2 leader, not just within a flat gap of 2.
+      // A tie 3 short of 33 (=30) is 91% of the leader — easily worth checking, and managers are cheap.
+      // Window = the LARGER of an absolute gap (4) and a relative one (12% of the leader), capped at 25
+      // ties so a pathological pile-up still can't run away. Managers being fast is exactly why we can
+      // afford to look wider here.
+      const leader=Math.max.apply(null,cleans);
+      const window=Math.max(4,Math.ceil(leader*0.12));
+      depthIdx=order.filter(i=>leader-cleans[i]<=window).slice(0,25);
+    }
     else depthIdx=order; // medium, slow
     if(doMgr){
       analyses=r.bestXIs.map(()=>null);
@@ -2289,11 +2303,26 @@ function _analyzeTies(r,form,opts){
       mgrCapped=analyses.some(a=>a&&a.capped);
     }
     let best=null;
-    depthIdx.forEach(i=>{const a=analyses&&analyses[i];if(!a)return;const bg=benchData[i].totalGain,tc=a.clean+a.subbed2,rx=r.bestXIs[i].sc.ratingExact;
-      if(!best||tc>best.tc||(tc===best.tc&&(a.plus1>best.p1||(a.plus1===best.p1&&(bg>best.bg||(bg===best.bg&&rx>best.rx))))))best={i,bg,tc,p1:a.plus1,rx};}); // ...then exact rating
+    // Winner tiebreak: true +2 count -> true +1 count -> exact (pre-floor) team rating -> clean +2 count.
+    // Bench expected-gain was dropped: it re-measured what true +2 already captures (subbed2 counts the
+    // sub-reachable managers), so it was noise. Clean +2 sits LAST on purpose — it doesn't change the
+    // final score, so it must never override a score-relevant axis; it only separates squads already
+    // equal on every meaningful measure, nudging toward the one whose +2s need fewer subs to realise.
+    depthIdx.forEach(i=>{const a=analyses&&analyses[i];if(!a)return;const tc=a.clean+a.subbed2,rx=r.bestXIs[i].sc.ratingExact,cl=a.clean;
+      if(!best
+        ||tc>best.tc
+        ||(tc===best.tc&&a.plus1>best.p1)
+        ||(tc===best.tc&&a.plus1===best.p1&&rx>best.rx)
+        ||(tc===best.tc&&a.plus1===best.p1&&rx===best.rx&&cl>best.cl))best={i,tc,p1:a.plus1,rx,cl};});
     bi=best?best.i:cleans.indexOf(Math.max.apply(null,cleans));
   }
-  return {analyses,benchData,benchCapped,mgrCapped,bi,benchCap:_benchCap,mgrCap:_mgrCap};
+  // Pass-scope truth for the warning boxes: ONE node meter (same one the 10M prompt watches),
+  // plus how many ties hit the per-tie budget vs were cut off by a user stop at that prompt.
+  const benchAborted=!!(benchData&&benchData.some(b=>b&&b.aborted));
+  const tiesCapped=benchData?benchData.filter(b=>b&&b.capped).length:0;
+  const tiesAborted=benchData?benchData.filter(b=>b&&b.aborted).length:0;
+  return {analyses,benchData,benchCapped,benchAborted,tiesCapped,tiesAborted,tiesTotal:r.bestXIs.length,
+    benchPassNodes:_benchNodeAcc,mgrCapped,bi,benchCap:_benchCap,mgrCap:_mgrCap};
 }
 function _handleSolveResult(r,cap,form,ms,out){
   if(r.error&&!/no eligible card/.test(r.error)){out.innerHTML='<div class="note" style="border-color:var(--bad)">'+r.error+'</div>';return}
@@ -2315,7 +2344,7 @@ function _handleSolveResult(r,cap,form,ms,out){
     // Even though the MAIN solve was cut short, the bench/manager checks still run on the ties found so far
     // (each is its own tiny search). The main capped warning is prepended by applyTie.
     const A=_analyzeTies(r,form);
-    window._solveCtx={ties:r.bestXIs,form,r,ms,cur:A.bi,cap,analyses:A.analyses,benchData:A.benchData,benchCapped:A.benchCapped,mgrCapped:A.mgrCapped,benchCap:A.benchCap,mgrCap:A.mgrCap,winnerIdx:A.bi};
+    window._solveCtx={ties:r.bestXIs,form,r,ms,cur:A.bi,cap,analyses:A.analyses,benchData:A.benchData,benchCapped:A.benchCapped,benchAborted:A.benchAborted,tiesCapped:A.tiesCapped,tiesAborted:A.tiesAborted,tiesTotal:A.tiesTotal,benchPassNodes:A.benchPassNodes,mgrCapped:A.mgrCapped,benchCap:A.benchCap,mgrCap:A.mgrCap,winnerIdx:A.bi};
     $('#mgrPanel').style.display='block';
     applyTie(A.bi);
     return;
@@ -2324,7 +2353,7 @@ function _handleSolveResult(r,cap,form,ms,out){
   // (clean + reachable with subs). Secondary: optimal-bench expected manager gain across
   // the full DB. Tertiary: +1 count.
   const A=_analyzeTies(r,form);
-  window._solveCtx={ties:r.bestXIs,form,r,ms,cur:A.bi,cap,analyses:A.analyses,benchData:A.benchData,benchCapped:A.benchCapped,mgrCapped:A.mgrCapped,benchCap:A.benchCap,mgrCap:A.mgrCap,winnerIdx:A.bi};
+  window._solveCtx={ties:r.bestXIs,form,r,ms,cur:A.bi,cap,analyses:A.analyses,benchData:A.benchData,benchCapped:A.benchCapped,benchAborted:A.benchAborted,tiesCapped:A.tiesCapped,tiesAborted:A.tiesAborted,tiesTotal:A.tiesTotal,benchPassNodes:A.benchPassNodes,mgrCapped:A.mgrCapped,benchCap:A.benchCap,mgrCap:A.mgrCap,winnerIdx:A.bi};
   $('#mgrPanel').style.display='block';
   applyTie(A.bi);
 }
@@ -2337,7 +2366,7 @@ function _reanalyze(which,cap){
       prevBenchData:ctx.benchData,prevBenchCapped:ctx.benchCapped,
       prevAnalyses:ctx.analyses,prevMgrCapped:ctx.mgrCapped
     });
-    ctx.analyses=A.analyses;ctx.benchData=A.benchData;ctx.benchCapped=A.benchCapped;ctx.mgrCapped=A.mgrCapped;ctx.benchCap=A.benchCap;ctx.mgrCap=A.mgrCap;
+    ctx.analyses=A.analyses;ctx.benchData=A.benchData;ctx.benchCapped=A.benchCapped;ctx.benchAborted=A.benchAborted;ctx.tiesCapped=A.tiesCapped;ctx.tiesAborted=A.tiesAborted;ctx.tiesTotal=A.tiesTotal;ctx.benchPassNodes=A.benchPassNodes;ctx.mgrCapped=A.mgrCapped;ctx.benchCap=A.benchCap;ctx.mgrCap=A.mgrCap;
     _hideSolverOverlay();applyTie(ctx.cur); // keep the user on their current tie
   };
   if(cap>150000000){                                        // deep/forever: same count-warning as the main solve, but against THIS search's own count
@@ -2383,7 +2412,7 @@ function _reanalyzeTie(escalate){
     if(prevAn&&prevAn.capped)tc.mgr*=3;
   }
   const _run=()=>{
-    _benchNodeAcc=0;_slowConfirmed=false;_benchAbort=false; // reset the cross-tie 10M guard so a single-tie rerun isn't spuriously interrupted by node totals racked up on OTHER ties
+    _benchNodeAcc=0;_slowConfirmed=true;_benchAbort=false;_benchTieIdx=1;_benchTieTotal=1; // single-tie rerun: pre-confirm the cross-tie 10M prompt so it never fires (there are no other ties) — this path is governed entirely by its OWN per-tie 3x cap system and shows an estimate scoped to just this tie
     // Swap this tie's own caps into the shared globals just for these two calls, then restore
     // whatever the bench/manager options panel had — a try/finally so a thrown error can't leave
     // the shared caps stuck at this tie's (possibly much higher) values.
@@ -2427,6 +2456,24 @@ function _reanalyzeTie(escalate){
 // extrapolated node count is in the hundreds of millions, since each combo triggers its own expensive
 // solveBest() call in slow mode; that's why "search to the end" wasn't warning when it should have).
 // Returns null when there isn't enough data yet to extrapolate.
+// Whole-pass node estimate, in the SAME currency as the 10M prompt and the pass meter: finished
+// ties contribute their actual nodes; unfinished slow ties extrapolate nodes/sampled x combos;
+// unfinished fast/medium ties use their pass model. So "finishing every tie at this depth" is
+// directly comparable to "searched so far" and to the 10M line.
+function _benchPassEstimate(ctx){
+  if(!ctx||!ctx.benchData)return null;
+  let sum=0,any=false,doneN=0,doneSum=0;const skipped=[];
+  ctx.benchData.forEach(bd=>{
+    if(!bd)return;any=true;
+    if(!bd.capped&&!bd.aborted){sum+=bd.nodes||0;doneN++;doneSum+=bd.nodes||0;return;}
+    if(bd.aborted&&!(bd.nodes>0)){skipped.push(bd);return;}      // tie skipped entirely after the stop — no data of its own
+    const est=_benchNodeEstimate(bd.mode,bd.nodes,bd.combos?Number(bd.combos):null,bd.combosChecked?Number(bd.combosChecked):null,bd.unitsChecked,bd.unitsTotal);
+    sum+=(typeof est==='number'&&isFinite(est)&&est>0)?est:(bd.nodes||0);
+  });
+  // Skipped ties: charge each the average completed-tie cost (0 would silently understate the pass).
+  if(skipped.length&&doneN)sum+=skipped.length*(doneSum/doneN);
+  return any?sum:null;
+}
 function _modeUiName(m){return m==='vfast'?'Very Fast':m==='fast'?'Medium':m==='medium'?'Slow':m==='slow'?'Very Slow':m;}
 // THE one shared status line for every bench/manager warning box (mini boxes, tie re-analysis box,
 // helper) so they all read identically: sampled counts, nodes so far, and a finish estimate that is
@@ -2447,7 +2494,7 @@ function _benchStatusTxt(mode,totalCombos,nodesUsed,combosChecked,unitsChecked,u
     // ONE estimate for Very Slow: the exact DP count of every arrangement across every combo. The
     // sampling extrapolation was a second, softer number next to it \u2014 redundant once the exact count
     // exists, so it's gone.
-    if(typeof proofCeil==='bigint'&&proofCeil>0n)parts.push('searching every combo to the end \u2264 '+_fmtCount(proofCeil)+' arrangements (exact count)');
+    if(typeof proofCeil==='bigint'&&proofCeil>0n)parts.push('full pass = '+_fmtCount(proofCeil)+' final arrangements (exact; solver nodes run somewhat higher \u2014 partial fills count too)');
   }else{
     const est=_benchNodeEstimate(mode,nodesUsed,totalCombos,combosChecked,unitsChecked,unitsTotal);
     if(typeof est==='number'&&isFinite(est)&&est>0){
@@ -2508,13 +2555,41 @@ function _tieCapWarn(cap,benchCombos,mgrExact,benchNodes,benchCombosChecked,benc
     +'<button class="btn gho sm" onclick="this.closest(\'.note\').remove()">Accept</button>'
     +'</div></div>';
 }
-function _reanalyzeBenchBtn(){return '<button class="btn gho sm" style="margin-top:8px;width:auto" onclick="_reanalyzeTie(\'reset\')">\u21bb Re-analyse this bench</button><div id="tieReBenchWarn"></div>';} // always starts fresh at this tie's own 3M base, like the main solve does on a new run \u2014 escalating on one tie must not leak into another tie's button, and never touches the shared bench/manager-options caps
-function _miniCapWarn(which,cap,exact,nodesUsed,combosChecked,mode,unitsChecked,unitsTotal,proofCeil){
-  const nextCap=cap*3,isB=which==='bench',label=isB?'Bench search':'Manager-awareness search';
-  let exTxt='';
-  if(isB&&exact){const t=_benchStatusTxt(mode||'slow',exact,nodesUsed,combosChecked,unitsChecked,unitsTotal,proofCeil);if(t)exTxt='<div class="tiny" style="margin-top:4px">'+t+'</div>';}
-  else if(!isB&&exact){exTxt='<div class="tiny" style="margin-top:4px">'+_fmtCount(exact)+' legal pool arrangements</div>';}
-  return '<div class="note" style="border-color:var(--bad);margin-bottom:10px"><b>\u26a0 '+label+' capped at '+(cap/1000000)+'M nodes</b> \u2014 best found so far.'+exTxt
+function _reanalyzeBenchBtn(){
+  // Re-run THIS tie at whatever cap it was last escalated to (persisted on ctx.tieCaps[cur]) — no arg
+  // means "run at this tie's own current cap", so switching away and back keeps the 27M you paid for
+  // instead of silently dropping to 3M. Reset is a separate, explicit choice, only shown once this tie
+  // has actually been pushed past the 3M base. Per-tie caps never touch each other or the shared panel caps.
+  const ctx=window._solveCtx,cur=ctx&&ctx.cur,tc=ctx&&ctx.tieCaps&&ctx.tieCaps[cur];
+  const cap=tc?Math.max(tc.bench||0,tc.mgr||0):3000000;
+  const capTxt=cap>=1e12?' (to the end)':cap>3000000?' ('+(cap/1000000)+'M)':'';
+  let html='<button class="btn gho sm" style="margin-top:8px;width:auto" onclick="_reanalyzeTie()">\u21bb Re-analyse this bench'+capTxt+'</button>';
+  if(cap>3000000)html+=' <button class="btn gho sm" style="margin-top:8px;width:auto" onclick="_reanalyzeTie(\'reset\')">\u21ba Reset to 3M</button>';
+  return html+'<div id="tieReBenchWarn"></div>';
+}
+function _miniCapWarn(which,cap,exact,nodesUsed,combosChecked,mode,unitsChecked,unitsTotal,proofCeil,agg){
+  const nextCap=cap*3,isB=which==='bench';
+  // ONE node currency everywhere: the pass meter (what the 10M prompt watches). The per-tie 3M
+  // budget is the escalation MECHANISM; the box reports the pass first, the viewed tie second, and
+  // never calls a user stop a "cap".
+  let head,exTxt='';
+  if(isB){
+    const A=agg||{};
+    head=A.aborted?'\u26a0 Bench search stopped early \u2014 you chose Stop at the 10M check':'\u26a0 Bench search capped \u2014 per-tie budget is '+(cap/1000000)+'M nodes';
+    const lines=[];
+    if(A.passNodes){let pl='<b>Pass</b> \u2014 '+_fmtCount(A.passNodes)+' nodes across '+(A.tiesTotal||'?')+' tie'+((A.tiesTotal||0)===1?'':'s');
+      if(A.tiesCapped)pl+=' \u00b7 '+A.tiesCapped+' hit the per-tie budget';
+      if(A.tiesAborted)pl+=' \u00b7 '+A.tiesAborted+' cut short by the stop';
+      if(typeof A.estPass==='number'&&isFinite(A.estPass)&&A.estPass>(A.passNodes||0))pl+=' \u00b7 finishing every tie at this depth \u2248 '+_fmtCount(Math.round(A.estPass))+' nodes';
+      lines.push(pl);}
+    const t=_benchStatusTxt(mode||'slow',exact,nodesUsed,combosChecked,unitsChecked,unitsTotal,proofCeil);
+    if(t){const st=(A.tieAborted?' \u00b7 cut short':(A.tieCapped?' \u00b7 hit its budget':' \u00b7 finished'));lines.push('<b>This tie</b> \u2014 '+t+st);}
+    if(lines.length)exTxt='<div class="tiny" style="margin-top:4px">'+lines.join('<br>')+'</div>';
+  }else{
+    head='\u26a0 Manager-awareness search capped at '+(cap/1000000)+'M nodes';
+    if(exact)exTxt='<div class="tiny" style="margin-top:4px">'+_fmtCount(exact)+' legal pool arrangements</div>';
+  }
+  return '<div class="note" style="border-color:var(--bad);margin-bottom:10px"><b>'+head+'</b> \u2014 best found so far.'+exTxt
     +'<div class="tiny" style="margin-top:4px">Recommended order: XIs \u2192 Bench Search \u2192 Manager Awareness. If there are too many ties, deepen one tie at a time with \u201cRe-analyse this bench\u201d on whichever speed setting you want.</div>'
     +'<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">'
     +'<button class="btn sm" onclick="_reanalyze(\''+which+'\','+nextCap+')">'+(isB?'Bench':'Managers')+': keep searching ('+(nextCap/1000000)+'M)</button>'
@@ -2544,7 +2619,7 @@ function applyTie(idx){
   // is only meaningful once the bench is fixed) — so mgr goes in first, main solve goes in last.
   {const so=$('#solveOut');if(so){
     if(ctx.mgrCapped)so.insertAdjacentHTML('afterbegin',_miniCapWarn('mgr',ctx.mgrCap||_mgrCap,ctx.analyses&&ctx.analyses[idx]?ctx.analyses[idx].exact:null));
-    if(ctx.benchCapped)so.insertAdjacentHTML('afterbegin',_miniCapWarn('bench',ctx.benchCap||_benchCap,ctx.benchData&&ctx.benchData[idx]?ctx.benchData[idx].combos:null,ctx.benchData&&ctx.benchData[idx]?ctx.benchData[idx].nodes:null,ctx.benchData&&ctx.benchData[idx]?ctx.benchData[idx].combosChecked:null,ctx.benchData&&ctx.benchData[idx]?ctx.benchData[idx].mode:null,ctx.benchData&&ctx.benchData[idx]?ctx.benchData[idx].unitsChecked:null,ctx.benchData&&ctx.benchData[idx]?ctx.benchData[idx].unitsTotal:null,ctx.benchData&&ctx.benchData[idx]?ctx.benchData[idx].proofCeil:null));
+    if(ctx.benchCapped||ctx.benchAborted){const _bd=ctx.benchData&&ctx.benchData[idx];so.insertAdjacentHTML('afterbegin',_miniCapWarn('bench',ctx.benchCap||_benchCap,_bd?_bd.combos:null,_bd?_bd.nodes:null,_bd?_bd.combosChecked:null,_bd?_bd.mode:null,_bd?_bd.unitsChecked:null,_bd?_bd.unitsTotal:null,_bd?_bd.proofCeil:null,{passNodes:ctx.benchPassNodes,tiesTotal:ctx.tiesTotal,tiesCapped:ctx.tiesCapped,tiesAborted:ctx.tiesAborted,aborted:ctx.benchAborted,estPass:_benchPassEstimate(ctx),tieCapped:!!(_bd&&_bd.capped),tieAborted:!!(_bd&&_bd.aborted)}));}
   }}
   if(ctx.r&&ctx.r.capped){const so=$('#solveOut');if(so)so.insertAdjacentHTML('afterbegin',_cappedWarnHTML(ctx.cap||getNodeCap()));}
   window._solved={main,form};
@@ -2559,7 +2634,7 @@ function _isIconPremMgr(m){return m.league==='Icons'||m.league==='England Premie
 // Compute optimal sub picks for a given XI, scored by expected manager gain across the full DB.
 // Returns {totalGain, bench, subPicks} where totalGain is the sum across all holds and all managers.
 /* ============================ SPEED TIERS ============================ */
-let _benchNodeAcc=0,_slowConfirmed=false,_benchAbort=false,_benchTotalCombos=null; // bench-only node budget guard (10M prompt below); manager checks are entirely separate and never touch this
+let _benchNodeAcc=0,_slowConfirmed=false,_benchAbort=false,_benchTotalCombos=null,_benchTieIdx=0,_benchTieTotal=0; // bench-only node budget guard (10M prompt below); manager checks are entirely separate and never touch this
 function _speedMode(){const el=$('#speedMode');return el&&el.value?el.value:'vfast';}
 function _lexGt(a,b){for(let i=0;i<a.length;i++){if(a[i]!==b[i])return a[i]>b[i];}return false;}
 function _maybeSlowPrompt(){
@@ -2570,13 +2645,18 @@ function _maybeSlowPrompt(){
   // individually-uncapped bench calls add up to a long combined bench search.
   if(_slowConfirmed||_benchAbort)return;
   if(_benchNodeAcc>10000000){
-    const comboTxt=_benchTotalCombos?' This draft has '+_fmtCount(_benchTotalCombos)+' total hold-combinations to check in \u201cslow\u201d mode, which is why.':'';
-    const ok=confirm('The bench search has already checked 10M+ nodes and still isn\'t finished.'+comboTxt+' On a complex draft this can take an extremely long time, for little to no change in the actual recommendation.\n\nKeep going? Choosing Cancel stops the remaining deep bench checks and shows the best bench result found so far \u2014 manager checks are unaffected and will continue as normal (they\'ll show their own cap prompt if they run long).');
+    const tieTxt=(_benchTieTotal>1?' It\u2019s on tie '+_benchTieIdx+' of '+_benchTieTotal+(_benchTotalCombos?' ('+_fmtCount(_benchTotalCombos)+' hold-combos on this tie)':'')+'.':(_benchTotalCombos?' This tie has '+_fmtCount(_benchTotalCombos)+' hold-combos.':''));
+    // Mid-pass whole-pass estimate, same currency as this meter: avg nodes per started tie x all ties.
+    // Rough (the tie in progress is only partly paid for) but it's exactly the number that decides
+    // whether keeping the deep all-ties search going is worth it.
+    const estTxt=(_benchTieTotal>1&&_benchTieIdx>=1)?' Finishing every tie at this depth \u2248 '+_fmtCount(Math.round(_benchNodeAcc/_benchTieIdx*_benchTieTotal))+' nodes total.':'';
+    const ok=confirm('The bench pass has searched 10M+ nodes ACROSS ALL TIES so far and isn\'t finished.'+tieTxt+estTxt+' On a complex draft this can take an extremely long time, for little to no change in the actual recommendation.\n\nKeep going? Choosing Cancel stops the remaining deep bench checks and shows the best bench result found so far \u2014 manager checks are unaffected and will continue as normal (they\'ll show their own cap prompt if they run long).');
     if(ok)_slowConfirmed=true;else _benchAbort=true;
   }
 }
 function computeBenchPicks(tie,form,mode){
   mode=mode||_speedMode();
+  const _entryAborted=_benchAbort;   // tie analysed after a user stop -> mark it, don't call it capped
   const _fnNodeStart=_benchNodeAcc;  // actual nodes searched during THIS call (each combo triggers its own solveBest(), so combo-count alone understates the real work)
   if(_benchAbort)mode='vfast';   // once bench is cancelled, remaining ties use the instant heuristic — skip the exhaustive combo build entirely
   const slotCards=tie.xi,sc=tie.sc;
@@ -2607,7 +2687,7 @@ function computeBenchPicks(tie,form,mode){
     const bench=[],subPicks=[];
     holds.forEach(hd=>{let bc=hd.list[0],bk=vfKey(bc);hd.list.forEach(c=>{const k=vfKey(c);if(_lexGt(k,bk)){bk=k;bc=c;}});bench.push({c:bc,why:insWhy(bc,sc)});subPicks.push({h:hd.h,label:bc.label});});
     singles.forEach(c=>bench.push({c,why:insWhy(c,sc)}));
-    return {totalGain:0,bench,subPicks,capped:false,combos:totalCombos,nodes:0,combosChecked:null,unitsChecked:null,unitsTotal:null,mode,proofCeil:null};
+    return {totalGain:0,bench,subPicks,capped:false,aborted:_entryAborted||_benchAbort,combos:totalCombos,nodes:0,combosChecked:null,unitsChecked:null,unitsTotal:null,mode,proofCeil:null};
   }
 
   // FAST / MEDIUM / SLOW share a coverage metric: distinct non-clean manager archetypes (nation|league)
@@ -2680,7 +2760,8 @@ function computeBenchPicks(tie,form,mode){
           const cov=coverage(chosenSet.concat([c]));
           const k=[cov.c2,cov.c1].concat(vfTie(c));
           if(bk===null||_lexGt(k,bk)){bk=k;bh=hi;bc=c;}
-          if(_benchAbort||_benchNodeAcc-_loopStart>=_benchCap){_bcapped=true;break outer;}
+          if(_benchAbort)break outer;                      // user stop is NOT a cap
+          if(_benchNodeAcc-_loopStart>=_benchCap){_bcapped=true;break outer;}
         }
       }
       if(!bc)break;
@@ -2706,7 +2787,8 @@ function computeBenchPicks(tie,form,mode){
       _combosChecked++;
       const key=[cov.c2,cov.c1,combo.reduce((a,c)=>a+c.rating,0),combo.reduce((a,c)=>a+fresh(c),0)];
       if(!best||_lexGt(key,best.key))best={combo,key};
-      if(_benchAbort||_benchNodeAcc-_loopStart>=_benchCap){_bcapped=true;break;}
+      if(_benchAbort)break;                                // user stop is NOT a cap
+      if(_benchNodeAcc-_loopStart>=_benchCap){_bcapped=true;break;}
     }
     chosen=best?best.combo:holds.map(hd=>hd.list[0]);
   }
@@ -2715,7 +2797,7 @@ function computeBenchPicks(tie,form,mode){
   holds.forEach((hd,i)=>{const c=chosen[i];bench.push({c,why:insWhy(c,sc)});subPicks.push({h:hd.h,label:c.label});});
   singles.forEach(c=>bench.push({c,why:insWhy(c,sc)}));
   const totalGain=(archReps.length&&!_benchAbort)?coverage(chosen).c2:0;
-  return {totalGain,bench,subPicks,capped:_bcapped,combos:totalCombos,nodes:_benchNodeAcc-_fnNodeStart,combosChecked:(mode==='slow')?_combosChecked:null,unitsChecked:(mode==='fast'||mode==='medium')?_unitsDone:null,unitsTotal:(mode==='fast'||mode==='medium')?_totalUnits:null,mode,proofCeil};
+  return {totalGain,bench,subPicks,capped:_bcapped,aborted:_entryAborted||_benchAbort,combos:totalCombos,nodes:_benchNodeAcc-_fnNodeStart,combosChecked:(mode==='slow')?_combosChecked:null,unitsChecked:(mode==='fast'||mode==='medium')?_unitsDone:null,unitsTotal:(mode==='fast'||mode==='medium')?_totalUnits:null,mode,proofCeil};
 }
 function analyzeManagerDepth(tie,form,benchCards){
   // True manager count for ONE tie, tested against the squad the solver actually fielded: the XI plus its
