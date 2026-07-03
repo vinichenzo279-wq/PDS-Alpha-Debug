@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v8.2.4</title>
+<title>Draft Solver v8.2.6</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -129,7 +129,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        for the user to tell which build they're on, and (b) can let an incompatible old auto-save
        load as if nothing changed. Bump on every patch, no matter how small.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.2.4</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.2.6</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -919,6 +919,22 @@ function sortPosDisplay(arr){
     return (ia===-1?999:ia)-(ib===-1?999:ib);
   });
 }
+// Priority order for disambiguation fields: position is the most practically relevant, then league, then club, then nation.
+// fieldVal/fieldLabel below are the single source of truth for both the "does this field distinguish them" check
+// and the text shown, so the two can never drift out of sync.
+const DISAMBIG_FIELDS=['pos','league','club','nation'];
+function fieldVal(o,f){
+  if(f==='pos')return sortPosDisplay(o.p.pos).join('/');
+  if(f==='league')return o.p.league||'';
+  if(f==='club')return o.p.club||o.p.type;
+  return o.p.nation||'';
+}
+function fieldLabel(o,f){
+  if(f==='pos')return sortPosDisplay(o.p.pos).join('/')||'\u2014';
+  if(f==='league')return o.p.league||'No league';
+  if(f==='club')return o.p.club||(o.p.type==='icon'?'Icon':'Hero');
+  return o.p.nation;
+}
 function dbDisplayList(matches){
   const groups={};
   matches.forEach(o=>{const k=o.p.name.toLowerCase()+'|'+o.p.rating;(groups[k]=groups[k]||[]).push(o);});
@@ -929,15 +945,17 @@ function dbDisplayList(matches){
     const seen={},uniq=[];
     g.forEach(o=>{const sig=(o.p.pos||[]).join('/')+'|'+(o.p.club||o.p.type)+'|'+o.p.nation+'|'+(o.p.league||'');if(!(sig in seen)){seen[sig]=1;uniq.push(o);}});
     if(uniq.length===1){out.push({idx:uniq[0].idx,label:uniq[0].p.name+'  \u00b7  '+uniq[0].p.rating});continue;}
-    const posVary=new Set(uniq.map(o=>(o.p.pos||[]).join('/'))).size>1;
-    const clubVary=new Set(uniq.map(o=>o.p.club||o.p.type)).size>1;
-    const natVary=new Set(uniq.map(o=>o.p.nation)).size>1;
-    const lgVary=new Set(uniq.map(o=>o.p.league||'')).size>1;
-    uniq.forEach(o=>{const b=[];
-      if(posVary)b.push(sortPosDisplay(o.p.pos).join('/')||'\u2014');
-      if(clubVary)b.push(o.p.club||(o.p.type==='icon'?'Icon':'Hero'));
-      if(lgVary)b.push(o.p.league||'No league');
-      if(natVary)b.push(o.p.nation);
+    // Progressively add fields in priority order, but ONLY if a field actually splits the group further
+    // than what's already chosen (so a field that's identical across the group, or redundant given the
+    // fields already picked, never appears) - and stop the moment the group is fully disambiguated.
+    let chosen=[],curSigs=new Set(uniq.map(()=>''));
+    for(const f of DISAMBIG_FIELDS){
+      if(curSigs.size===uniq.length)break;
+      const trial=[...chosen,f];
+      const trialSigs=new Set(uniq.map(o=>trial.map(cf=>fieldVal(o,cf)).join('\u0001')));
+      if(trialSigs.size>curSigs.size){chosen=trial;curSigs=trialSigs;}
+    }
+    uniq.forEach(o=>{const b=chosen.map(f=>fieldLabel(o,f));
       out.push({idx:o.idx,label:o.p.name+'  \u00b7  '+o.p.rating+(b.length?'  ('+b.join(', ')+')':'')});});
   }
   out.sort((a,b)=>playerDB[b.idx].rating-playerDB[a.idx].rating||playerDB[a.idx].name.localeCompare(playerDB[b.idx].name));
@@ -1039,7 +1057,11 @@ $('#dbFile').addEventListener('change',e=>{
     const arr=JSON.parse(rd.result);
     if(!Array.isArray(arr))throw new Error('expected a JSON array of players');
     // seed from existing DB so importing icons + heroes + prem separately accumulates (files stay separate)
-    const merged={},keyOf=r=>r.name.toLowerCase()+'|'+(r.club||r.type)+'|'+r.rating+'|'+r.type;
+    // keyOf canonicalizes on the fly so a raw/un-canonicalized record already sitting in playerDB (e.g. club:"Man City")
+    // still hashes the same as a freshly-imported, canon*-processed copy of the same card (club:"Manchester City").
+    // Nation is included as a genuine differentiator: same name/club/rating/type/league/pos but a different nation
+    // is a real discrepancy, not a duplicate, so it must NOT silently merge and drop one side's data.
+    const merged={},keyOf=r=>r.name.toLowerCase()+'|'+(canonClub(r.club)||r.type)+'|'+r.rating+'|'+r.type+'|'+canonLeague(r.league)+'|'+canonNation(r.nation||'')+'|'+(r.pos||[]).slice().sort().join(',');
     playerDB.forEach(r=>{merged[keyOf(r)]=r;});
     const before=playerDB.length;
     arr.forEach(p=>{
@@ -1048,8 +1070,12 @@ $('#dbFile').addEventListener('change',e=>{
         nation:canonNation(p.nation||''),league:canonLeague(p.league),club:canonClub(p.club||null),
         pos:(p.pos||[]).map(normPos)};
       const key=keyOf(rec);
-      if(merged[key]){const m=merged[key];rec.pos.forEach(x=>{if(!m.pos.includes(x))m.pos.push(x);});}
-      else merged[key]=rec;
+      if(merged[key]){
+        // true duplicate (identical on every field including nation) - keep the canonical rec, union the positions
+        const m=merged[key];
+        const pos=Array.from(new Set([...(m.pos||[]),...rec.pos]));
+        merged[key]={...rec,pos};
+      } else merged[key]=rec;
     });
     playerDB=Object.values(merged).filter(p=>p.name);rebuildRarity();
     const added=playerDB.length-before;
