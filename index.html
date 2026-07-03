@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v8.9</title>
+<title>Draft Solver v8.11</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -141,7 +141,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        e.g. v8.2.6 -> v8.2.7 is a text-only tweak; a real bug fix or minor feature/data addition
        would be v8.3.0; a major new feature would be v9.0.0.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.9</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.11</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -3128,10 +3128,21 @@ function cleanMgrCount(sc){let n=0;for(const m of MANAGER_DB){if(!sc.nationSet.h
 function _minSwapLayout(xi,slots){
   const n=slots.length,BIG=1e6,cardsA=xi.slice();
   if(cardsA.length!==n||cardsA.some(c=>!c))return xi;
-  // "home" slot index = the formation slot this card currently occupies in the solved layout that is
-  // ALSO consistent with its drafted position; we reward keeping a card where it already legally sits,
-  // so the arranger only moves cards when a move genuinely reduces total displacement.
-  const homeIdx={};cardsA.forEach((c,i)=>{if(c&&homeIdx[c.id]===undefined)homeIdx[c.id]=i;});
+  // "home" slot index = the formation slot this card was actually DRAFTED into (its board hold),
+  // not wherever the solver's DFS happened to place it -- scoreXI() is permutation-agnostic, so the
+  // solver is free to land the same winning card SET in any legal slot permutation, and the printed
+  // layout was previously keying "home" off that already-arbitrary solved order (a no-op: staying
+  // put is always cost 0, so nothing ever got un-shuffled). board[0..slots.length-1] (P0..P10) is
+  // built directly from the formation string in the same order as form.slots, so a card's hold id's
+  // index in board IS its true home slot index -- this also disambiguates duplicate labels like the
+  // two "CM" slots (CM1/CM2), which a plain slots.indexOf(pos) lookup could not.
+  const homeIdx={};
+  cardsA.forEach((c,i)=>{
+    if(!c||homeIdx[c.id]!==undefined)return;
+    let bi=-1;
+    if(c.hold&&typeof board!=='undefined'&&board)bi=board.findIndex(s=>s.id===c.hold);
+    homeIdx[c.id]=(bi>=0&&bi<n)?bi:i; // fall back to solved index (e.g. bench-sourced starter)
+  });
   const cost=cardsA.map(c=>slots.map((sl,si)=>{
     if(!(c.pos||[]).includes(sl))return BIG;      // illegal slot for this card
     return homeIdx[c.id]===si?0:1;                // 0 to stay put, 1 to move -> minimise moves
@@ -3326,7 +3337,14 @@ function pickMgr(cap){
   setTimeout(()=>_pickMgrInner(cap),30);
 }
 function _pickMgrInner(cap){
-  const main=window._solved.main,form=window._solved.form,baseSc=main.sc,mainXI=main.xi;
+  const main=window._solved.main,form=window._solved.form,baseSc=main.sc;
+  // Use the SAME corrected (drafted-hold) layout the main XI panel prints, not the solver's raw,
+  // set-scored (so arbitrarily-permuted) order — otherwise "moves needed" here is measured against
+  // an arrangement the user never actually sees on screen. _minSwapLayout is a pure, deterministic
+  // relabeling (same 11 cards, same score) so this changes nothing about totals/gains/search, only
+  // which slot is treated as "home" for the move count. Falls back to main.xi unchanged if no fully
+  // legal layout exists (e.g. an emergency/OOP squad), same safety as the main panel.
+  const mainXI=_minSwapLayout(main.xi,form.slots);
   const bench=(window._bench||[]).map(b=>b.c);
   const oopIds=window._solved.oopIds;
   // 1) A clean +2 on the XI as it stands is the best possible — report it, skip the re-solve and the other managers.
