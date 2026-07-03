@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v8.11</title>
+<title>Draft Solver v8.12.1</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -140,8 +140,28 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
          - 3rd number (TEXT): copy/label/comment/formatting edits only — no logic changed at all.
        e.g. v8.2.6 -> v8.2.7 is a text-only tweak; a real bug fix or minor feature/data addition
        would be v8.3.0; a major new feature would be v9.0.0.
+
+       CHANGELOG CONVENTION (started v8.12): every version bump gets a one-line entry added to the
+       CHANGELOG block just below, in the form "vX.Y.Z — what changed, in a few words". This is
+       purely a debugging aid: several pieces of state (window._solved, lastSolve, the various
+       relayout passes) are computed independently in more than one place and are supposed to stay
+       in sync by construction rather than by a shared reference — if a future desync bug shows up,
+       being able to scan "which version's summary mentions touching this code path" narrows down
+       the culprit far faster than bisecting blind. Keep entries short; the "why" belongs in the
+       inline code comments near the change, not here.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.11</span></h1>
+  <!-- CHANGELOG:
+       v8.12 — applyTie() now canonicalizes main.xi to the min-swap relaid layout (_minSwapLayout)
+               BEFORE renderSummary/window._solved/lastSolve.xi read it, so the saved/exported log
+               (refreshLog's ctx branch, lastSolve.xi) can no longer show a different slot pairing
+               than the summary panel and pickMgr's baseline already agree on. Mirrors the
+               em.pick=relaid fix already in place for the emergency/OOP path.
+       v8.12.1 — Save/log panel: added a note telling users when to download the .txt for reporting
+               a suspected solver issue (beatable solution, inputs/nodes/RC already double-checked)
+               vs. a DB data issue (player in wrong position(s) or other bad card data). Text/UI
+               only, no logic changed.
+  -->
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.12.1</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -342,6 +362,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
       <button class="btn gho sm" onclick="downloadLog()">Download (.txt)</button>
       <label class="btn sec sm" style="text-align:center;cursor:pointer;margin:0">Import file<input type="file" id="importFile" accept=".txt,.json,application/json,text/plain" style="display:none"></label>
     </div>
+    <div class="note">If you believe the solution generated was beatable, and you've verified you didn't input anything incorrectly, searched deep enough in nodes, and used the correct RC value, download the .txt for reporting the issue. If the issue is instead due to a mistake in the DB — a player in the wrong position(s) or other bad data — report this too.</div>
   </div>
 </div>
 </div>
@@ -2106,6 +2127,19 @@ function _renderEmergencyFill(form,cap){
 function _renderEmergencyFillInner(form,cap){
   const out=$('#solveOut');
   const em=completeOOP(form,cap);
+  // completeOOP hands back pick[]/oop[] in whatever order its two-stage solve happened to land them
+  // in -- same "arbitrary permutation among position-equivalent cards" issue _minSwapLayout exists to
+  // fix for clean solves, except previously this screen never ran that pass at all, so an emergency
+  // XI could print "moved" churn a clean XI never would have. _minSwapLayout (via _minMovesRelayout)
+  // relabels the SAME 11 cards toward their drafted board hold without ever letting a card cross the
+  // legal/illegal line, so this can't change which cards are OOP, the chem/score, or oopCount -- only
+  // which specific slot each card is shown sitting in. oop[] is recomputed from the relabelled
+  // positions (the SET of OOP card ids is unchanged, just possibly at different indices now).
+  if(em.full11){
+    const relaid=_minSwapLayout(em.pick,em.slots);
+    em.pick=relaid;
+    em.oop=relaid.map((c,i)=>!(c.pos||[]).includes(em.slots[i]));
+  }
   let rows='';
   for(let i=0;i<em.slots.length;i++){const c=em.pick[i],o=em.oop[i];
     rows+='<div class="xirow"'+(o?' style="background:rgba(229,72,77,.07)"':'')+'><div class="sl">'+em.slots[i]+'</div><div class="pl">'+
@@ -2856,6 +2890,13 @@ function applyTie(idx){
   const ctx=window._solveCtx;if(!ctx)return;
   idx=((idx%ctx.ties.length)+ctx.ties.length)%ctx.ties.length;ctx.cur=idx;
   const main=ctx.ties[idx],form=ctx.form,cmc=cleanMgrCount(main.sc);
+  // Canonicalize main.xi to the same min-swap relaid layout renderSummary/pickMgr compute, BEFORE
+  // anything downstream reads it -- otherwise lastSolve.xi (save/restore) and refreshLog's ctx branch
+  // (which both zip main.xi/t.xi against form.slots by raw index) can print a different same-score,
+  // same-members slot pairing than the one actually on screen. Mutates the same object sitting in
+  // ctx.ties[idx], so refreshLog's later t.xi read picks up the canonical order too. Mirrors what the
+  // emergency path already does by reassigning em.pick=relaid (see _renderEmergencyFillInner).
+  main.xi=_minSwapLayout(main.xi,form.slots);
   renderSummary(main,form,ctx.r,ctx.ms,cmc,idx);
   // Insert in dependency order (mgr, then bench, then main) since insertAdjacentHTML('afterbegin')
   // stacks each new box above the previous ones — so the LAST one inserted here ends up on TOP.
@@ -3118,15 +3159,87 @@ function analyzeManagerDepth(tie,form,benchCards){
   return {clean,subbed2,plus1,analyzed:true,capped:!!(r2&&r2.capped),exact,nodes:_tieNodes};
 }
 function cleanMgrCount(sc){let n=0;for(const m of MANAGER_DB){if(!sc.nationSet.has(m.nation)&&!sc.leagueSet.has(m.league))n++;}return n;}
+// Plain Kuhn-Munkres (Hungarian) min-cost perfect matching on a square cost matrix. Returns the
+// assignment array (assign[row]=col) for whatever cost matrix it's given -- no domain knowledge of
+// legality/OOP here, that's layered on by _minMovesRelayout below. O(n^3), n<=11 for a starting XI.
+function _hungarianAssign(cost){
+  const n=cost.length; if(n===0)return [];
+  const u=new Array(n+1).fill(0),v=new Array(n+1).fill(0),p=new Array(n+1).fill(0),way=new Array(n+1).fill(0);
+  for(let i=1;i<=n;i++){
+    p[0]=i;let j0=0;const minv=new Array(n+1).fill(Infinity),used=new Array(n+1).fill(false);
+    do{
+      used[j0]=true;const i0=p[j0];let delta=Infinity,j1=-1;
+      for(let j=1;j<=n;j++){ if(used[j])continue;
+        const cur=cost[i0-1][j-1]-u[i0]-v[j];
+        if(cur<minv[j]){minv[j]=cur;way[j]=j0;}
+        if(minv[j]<delta){delta=minv[j];j1=j;} }
+      for(let j=0;j<=n;j++){ if(used[j]){u[p[j]]+=delta;v[j]-=delta;} else minv[j]-=delta; }
+      j0=j1;
+    }while(p[j0]!==0);
+    do{const j1=way[j0];p[j0]=p[j1];j0=j1;}while(j0!==0);
+  }
+  const assign=new Array(n).fill(-1);
+  for(let j=1;j<=n;j++){ if(p[j]>0)assign[p[j]-1]=j-1; }
+  return assign;
+}
+// Minimum-moves re-layout of a FIXED set of 11 cards across the SAME 11 formation slots, keyed to a
+// per-card "home" index (0 cost to sit there, 1 to sit anywhere else legal-equivalent). Used by both
+// _minSwapLayout (print-only relabel of a clean solve) and pickMgr's move-count canonicalisation.
+//
+// A single combined Hungarian pass over all 11 cards used to mark any illegal (card,slot) pair as a
+// ~infinite cost -- fine for a clean XI (every card is legal somewhere, a perfect legal matching always
+// exists), but for an emergency/OOP XI at least one card is legal in ZERO slots of the formation, so
+// every cell in its row is ~infinite, the perfect-matching total is forced ~infinite, and the whole
+// function bailed to the unrelabelled input -- even for the other 10 perfectly relabel-able cards.
+//
+// Fix: split into two INDEPENDENT matchings, one per legality class, each of which always has a
+// trivial zero-cost feasible solution (every card kept exactly where it already sits), so neither can
+// ever hit the bail condition:
+//   Group A -- cards legal in their current slot. Matched only against slots currently held by other
+//              Group A cards. Illegal destinations stay ~infinite cost, exactly as before -- a legal,
+//              chem-earning card can never be relabelled into an illegal slot.
+//   Group B -- cards illegal in their current slot (OOP placeholders, 0 chem regardless of which slot
+//              they sit in). Matched only against slots currently held by other Group B cards, with
+//              the direction of the illegal-cost rule INVERTED: landing on a slot the card WOULD be
+//              legal for is the ~infinite-cost move here, not the normal one. Without that inversion,
+//              a relabel could silently promote an OOP card into a legal slot -- gaining real chem the
+//              caller's already-computed score object doesn't know about.
+// Cards never cross groups (a Group A slot is never offered to a Group B card or vice versa), so no
+// relabel can ever change which cards are legal/illegal -- score, chem, and everything derived from
+// them stay exactly what the caller already computed. Returns the input unchanged only if a group
+// somehow fails its own (normally-guaranteed) feasibility check, as a last-ditch safety net.
+function _minMovesRelayout(cardsIn,slots,homeIdx){
+  const n=slots.length,BIG=1e6;
+  if(cardsIn.length!==n||cardsIn.some(c=>!c))return cardsIn;
+  const idxA=[],idxB=[];
+  for(let i=0;i<n;i++)((cardsIn[i].pos||[]).includes(slots[i])?idxA:idxB).push(i);
+  const out=new Array(n);
+  for(const legalGroup of [true,false]){
+    const idxG=legalGroup?idxA:idxB;
+    if(!idxG.length)continue;
+    const cardsG=idxG.map(i=>cardsIn[i]),slotsG=idxG.map(i=>slots[i]);
+    const homeIdxG=idxG.map(i=>{const id=cardsIn[i].id;return homeIdx[id]!==undefined?homeIdx[id]:i;});
+    const cost=cardsG.map((c,ci)=>slotsG.map((s,sj)=>{
+      const legalHere=(c.pos||[]).includes(s);
+      if(legalGroup?!legalHere:legalHere)return BIG; // A: must stay legal. B: must stay illegal (no silent chem upgrade).
+      return homeIdxG[ci]===idxG[sj]?0:1;            // 0 to stay home, 1 to move within the same legality class
+    }));
+    const assign=_hungarianAssign(cost);
+    let total=0;for(let ci=0;ci<idxG.length;ci++)total+=cost[ci][assign[ci]];
+    if(total>=BIG){ idxG.forEach(i=>{out[i]=cardsIn[i];}); continue; } // shouldn't happen (identity is always feasible) -- safety net, this group only
+    for(let ci=0;ci<idxG.length;ci++)out[idxG[assign[ci]]]=cardsG[ci];
+  }
+  return out.every(Boolean)?out:cardsIn;
+}
 // Print-only minimum-swap re-layout for a solved XI. The solver scores a squad as a SET, so among
 // position-equivalent cards it returns an ARBITRARY slot order -- which can print as "move A to CM,
 // move B to CDM" churn that changes nothing. This re-assigns the SAME 11 cards to the SAME formation
 // slots to minimise how many sit away from where they were drafted (their board hold), so the printed
 // layout reads as few moves as possible. It cannot change WHICH cards are in the XI, the score, chem,
 // or anything the solver computed -- only which legal slot each card is shown in. Returns a new xi
-// array (same members) or the input unchanged if no fully-legal perfect layout exists.
+// array (same members) or the input unchanged if no relabelling is possible (see _minMovesRelayout).
 function _minSwapLayout(xi,slots){
-  const n=slots.length,BIG=1e6,cardsA=xi.slice();
+  const n=slots.length,cardsA=xi.slice();
   if(cardsA.length!==n||cardsA.some(c=>!c))return xi;
   // "home" slot index = the formation slot this card was actually DRAFTED into (its board hold),
   // not wherever the solver's DFS happened to place it -- scoreXI() is permutation-agnostic, so the
@@ -3143,33 +3256,10 @@ function _minSwapLayout(xi,slots){
     if(c.hold&&typeof board!=='undefined'&&board)bi=board.findIndex(s=>s.id===c.hold);
     homeIdx[c.id]=(bi>=0&&bi<n)?bi:i; // fall back to solved index (e.g. bench-sourced starter)
   });
-  const cost=cardsA.map(c=>slots.map((sl,si)=>{
-    if(!(c.pos||[]).includes(sl))return BIG;      // illegal slot for this card
-    return homeIdx[c.id]===si?0:1;                // 0 to stay put, 1 to move -> minimise moves
-  }));
-  const u=new Array(n+1).fill(0),v=new Array(n+1).fill(0),pp=new Array(n+1).fill(0),way=new Array(n+1).fill(0);
-  for(let i=1;i<=n;i++){
-    pp[0]=i;let j0=0;const minv=new Array(n+1).fill(Infinity),used=new Array(n+1).fill(false);
-    do{
-      used[j0]=true;const i0=pp[j0];let delta=Infinity,j1=-1;
-      for(let j=1;j<=n;j++){ if(used[j])continue;
-        const cur=cost[i0-1][j-1]-u[i0]-v[j];
-        if(cur<minv[j]){minv[j]=cur;way[j]=j0;}
-        if(minv[j]<delta){delta=minv[j];j1=j;} }
-      for(let j=0;j<=n;j++){ if(used[j]){u[pp[j]]+=delta;v[j]-=delta;} else minv[j]-=delta; }
-      j0=j1;
-    }while(pp[j0]!==0);
-    do{const j1=way[j0];pp[j0]=pp[j1];j0=j1;}while(j0!==0);
-  }
-  const assign=new Array(n).fill(-1);
-  for(let j=1;j<=n;j++){ if(pp[j]>0)assign[pp[j]-1]=j-1; }
-  let total=0;for(let ci=0;ci<n;ci++)total+=cost[ci][assign[ci]];
-  if(total>=BIG)return xi;                          // no legal perfect layout -> leave as solved
-  const out=new Array(n);for(let ci=0;ci<n;ci++)out[assign[ci]]=cardsA[ci];
-  return out.every(Boolean)?out:xi;
+  return _minMovesRelayout(cardsA,slots,homeIdx);
 }
 function renderSummary(main,form,r,ms,cleanMgrs,idx){
-  const sc=main.sc,slotCards=_minSwapLayout(main.xi,form.slots); // print-only min-swap layout; main.xi itself is left exactly as solved
+  const sc=main.sc,slotCards=_minSwapLayout(main.xi,form.slots); // print-only min-swap layout; harmless no-op here if the caller (applyTie) already canonicalized main.xi
   let xiHtml='';
   for(let i=0;i<form.slots.length;i++){
     const c=slotCards[i];
@@ -3389,45 +3479,19 @@ function _pickMgrInner(cap){
   // Critically, this function ONLY reorders which slot each already-chosen card sits in -- it never
   // changes which cards are in the XI, never drops a card, and is called on `xi` AFTER `sc`/`total` are
   // already computed from the original card set (see consider() below), so it can never affect score and
-  // can never cause a lower-total candidate to be preferred over a higher-total one. It also can't cause
-  // consider() to skip a candidate: on any card-count mismatch or on the (should-never-happen) case where
-  // no fully-legal perfect matching exists, it safely falls back to returning the input `xi` unchanged.
-  const _hungarianMinMoves=(cards,slots,origIdx)=>{
-    const n=slots.length,BIG=1e6;
-    const cost=cards.map(c=>slots.map((s,si)=>{
-      if(!(c.pos||[]).includes(s))return BIG;
-      return origIdx[c.id]===si?0:1;
-    }));
-    const u=new Array(n+1).fill(0),v=new Array(n+1).fill(0),p=new Array(n+1).fill(0),way=new Array(n+1).fill(0);
-    for(let i=1;i<=n;i++){
-      p[0]=i;let j0=0;
-      const minv=new Array(n+1).fill(Infinity),used=new Array(n+1).fill(false);
-      do{
-        used[j0]=true;const i0=p[j0];let delta=Infinity,j1=-1;
-        for(let j=1;j<=n;j++){ if(used[j])continue;
-          const cur=cost[i0-1][j-1]-u[i0]-v[j];
-          if(cur<minv[j]){minv[j]=cur;way[j]=j0;}
-          if(minv[j]<delta){delta=minv[j];j1=j;}
-        }
-        for(let j=0;j<=n;j++){ if(used[j]){u[p[j]]+=delta;v[j]-=delta;} else minv[j]-=delta; }
-        j0=j1;
-      }while(p[j0]!==0);
-      do{const j1=way[j0];p[j0]=p[j1];j0=j1;}while(j0!==0);
-    }
-    const assign=new Array(n).fill(-1);
-    for(let j=1;j<=n;j++){ if(p[j]>0)assign[p[j]-1]=j-1; }
-    let total=0;
-    for(let ci=0;ci<n;ci++)total+=cost[ci][assign[ci]];
-    if(total>=BIG)return null;              // no fully-legal perfect matching -- caller bails to input
-    const out=new Array(n);
-    for(let ci=0;ci<n;ci++)out[assign[ci]]=cards[ci];
-    return out;
-  };
+  // can never cause a lower-total candidate to be preferred over a higher-total one.
+  //
+  // Uses the shared _minMovesRelayout (see above _minSwapLayout) instead of a single combined Hungarian
+  // pass, so an emergency/OOP candidate XI (one containing a card that's legal in zero formation slots)
+  // still gets its 10 legally-placeable cards minimised instead of the whole relabel bailing to the
+  // solver's arbitrary order just because one card can't be legally placed anywhere. Same split-by-
+  // legality-class guarantee as _minSwapLayout: a card can never be relabelled across the legal/illegal
+  // line, so this still can't cause consider() to see a chem/score value inconsistent with `sc`.
   const _minMoveArrange=xi=>{
     const slots=form.slots,cards=xi.filter(Boolean);
     if(cards.length!==slots.length)return xi;              // safety: only full XIs
     const orig={};mainXI.forEach((c,i)=>{if(c)orig[c.id]=i;});
-    return _hungarianMinMoves(cards,slots,orig)||xi;
+    return _minMovesRelayout(cards,slots,orig);
   };
   function consider(m,xi,sc){
     if(xi!==mainXI)xi=_minMoveArrange(xi); // baseline (xi===mainXI) is already canonical, skip the no-op copy
