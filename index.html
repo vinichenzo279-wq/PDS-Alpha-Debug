@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v8.12.2</title>
+<title>Draft Solver v8.12.3</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -172,8 +172,20 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                escalation, per-tie re-analysis, 10M-prompt choice and mid-session setting change in
                press order (reset only by a from-scratch Solve); printed at the end of the log/.txt.
                Report note now points at Advanced solver settings for the RC value.
+       v8.12.3 — Rating-Ceiling completeness warning in the solver section. The solver already
+               computes each squad's true rating to score it, so it now also tracks the highest true
+               rating seen across the whole search (maxRating, seeded from the probe/reuse XIs too so
+               aggressive-pruning runs are covered). RC only ever enters as the rating cap in the
+               pruning bound, never in the score, so: maxRating<RC is a PROOF the search was sound on
+               rating (RC never bound a real squad — it could even be lowered toward maxRating to go
+               faster); maxRating===RC is the boundary, so a soft 'hit the exact RC — unless you're
+               sure it can't rate higher, re-solve higher' note shows; maxRating>RC proves the bound
+               underestimated a branch, so a hard 'likely hid better squads — re-solve higher' note
+               shows. Sits on top of the warning stack (it's the one caveat that says the OPTIMUM
+               itself may be wrong), keyed to the RC actually used for that solve. Zero search impact
+               — node fingerprints byte-identical to 8.12.2. (Non-iOS build for now.)
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.12.2</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.12.3</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -1926,6 +1938,16 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs){
   }
   let best=(typeof seedBest==="number"&&seedBest>=0)?seedBest:-1;
   let bestXIs=(best>=0&&seedXIs&&seedXIs.length)?seedXIs.map(x=>({xi:x.xi,sc:x.sc,foundAt:0,seed:true})):[];
+  // Highest TRUE squad rating (floor(ratingExact), the same integer that enters sc.total) seen across
+  // every complete XI scored. RC only ever enters the search as the rating ceiling in the pruning UB
+  // (ub = RC+33+chem/diversity); the score itself never clamps rating. So comparing this max to RC
+  // tells the user whether RC was actually binding: max<RC means RC never touched a real squad (sound,
+  // and RC could be lowered to save time); max===RC is the boundary (a higher-rated squad, if one
+  // exists, would rate >RC and could have been pruned before we ever scored it); max>RC means the UB
+  // underestimated at least one branch's rating, so better squads were likely pruned. One integer
+  // compare per leaf — sc.rating is already computed for the score, so this adds no measurable cost.
+  let maxRating=-1;
+  if(bestXIs.length)for(const b of bestXIs){const rr=b.sc&&b.sc.rating;if(typeof rr==='number'&&rr>maxRating)maxRating=rr;}
   let nodes=0;const CAP=nodeCap||3000000;let capped=false;
   const usedGroups=new Set(),pick=new Array(slots.length).fill(null);
   // v5.5 #1: incremental diversity state — add on descent, delete on backtrack; eliminates
@@ -1937,6 +1959,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs){
     if(capped)return;
     if(k===order.length){
       const xi=pick.slice(),sc=scoreXI(xi);
+      if(sc.rating>maxRating)maxRating=sc.rating;   // cheap: sc.rating already computed for the score
       if(sc.total>best){best=sc.total;const key=xi.map(c=>c.id).sort().join(',');bestXIs=[{xi,sc,foundAt:nodes,key}]}
       else if(sc.total===best){
         const key=xi.map(c=>c.id).sort().join(',');
@@ -2028,7 +2051,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs){
     }
   }
   dfs(0);
-  return {best,bestXIs,nodes,capped,slots};
+  return {best,bestXIs,nodes,capped,slots,maxRating,rcUsed:RC};
 }
 
 function greedyPartial(form){
@@ -2942,6 +2965,24 @@ function _miniCapWarn(which,cap,exact,nodesUsed,combosChecked,mode,unitsChecked,
     +'<button class="btn gho sm" onclick="this.closest(\'.note\').remove()">Accept</button>'
     +'</div></div>';
 }
+// Rating-Ceiling completeness caveat, shown in the solver section when the highest TRUE squad rating
+// seen during the search reached or passed the RC used for pruning (see maxRating in solveBest). Two
+// distinct signals:
+//   maxRating > RC  -> we actually scored a squad rating higher than the ceiling the UB assumed, so
+//                      the bound was unsound on at least one branch: better squads were likely pruned
+//                      unseen. Definitive "re-solve higher".
+//   maxRating === RC -> exact boundary. Everything we scored fit under the ceiling, but a hypothetical
+//                      higher-rated squad would rate >RC and could have been pruned before we ever
+//                      reached its leaf, so we can't certify completeness. Softer "unless you're sure".
+// Returns '' when maxRating < RC (RC never bound a real squad -> the result is sound on rating; RC
+// could even be lowered toward maxRating to search faster next time).
+function _rcCeilWarnHTML(maxRating,rc){
+  if(typeof maxRating!=='number'||typeof rc!=='number'||maxRating<0||maxRating<rc)return '';
+  if(maxRating>rc){
+    return '<div class="note" style="border-color:var(--bad);margin-bottom:10px"><b>\u26a0 Rating Ceiling likely hid better squads</b> \u2014 the highest-rated node checked (rating '+maxRating+') had a higher rating than the RC ('+rc+') used for speed and pruning, meaning there were likely missed solutions. Re-solve with a higher RC setting.</div>';
+  }
+  return '<div class="note" style="border-color:var(--warn);margin-bottom:10px"><b>\u26a0 Rating Ceiling reached exactly</b> \u2014 the nodes checked hit the exact RC value ('+rc+') used for speed and pruning. Unless you\u2019re sure this draft cannot be rated higher, re-solve with a higher RC setting.</div>';
+}
 function _cappedWarnHTML(cap){
   const nextCap=cap*3;
   const note=nextCap>200000000?'Going much deeper may take very long and may not be worthwhile.':'Jumping to '+(nextCap/1000000)+'M has improved results in practice.';
@@ -2974,6 +3015,11 @@ function applyTie(idx){
     if(ctx.benchCapped||ctx.benchAborted){const _bd=ctx.benchData&&ctx.benchData[idx];so.insertAdjacentHTML('afterbegin',_miniCapWarn('bench',ctx.benchCap||_benchCap,_bd?_bd.combos:null,_bd?_bd.nodes:null,_bd?_bd.combosChecked:null,_bd?_bd.mode:null,_bd?_bd.unitsChecked:null,_bd?_bd.unitsTotal:null,_bd?_bd.proofCeil:null,{passNodes:ctx.benchPassNodes,tiesTotal:ctx.tiesTotal,tiesCapped:ctx.tiesCapped,tiesAborted:ctx.tiesAborted,aborted:ctx.benchAborted,estPass:_benchPassEstimate(ctx),tieCapped:!!(_bd&&_bd.capped),tieAborted:!!(_bd&&_bd.aborted)}));}
   }}
   if(ctx.r&&ctx.r.capped){const so=$('#solveOut');if(so)so.insertAdjacentHTML('afterbegin',_cappedWarnHTML(ctx.cap||getNodeCap()));}
+  // RC completeness caveat sits on TOP of the whole stack: it's the one warning that says the OPTIMUM
+  // itself may be wrong (missed via unsound pruning), not just "search truncated" or "bench not deep".
+  // Keyed to the RC actually used for this solve (ctx.r.rcUsed), not the live slider the user may have
+  // since moved. Whole-solve property, so it re-appears on every tie switch (applyTie re-renders).
+  if(ctx.r){const w=_rcCeilWarnHTML(ctx.r.maxRating,ctx.r.rcUsed);if(w){const so=$('#solveOut');if(so)so.insertAdjacentHTML('afterbegin',w);}}
   window._solved={main,form};
   {const w=ctx.tieWarn&&ctx.tieWarn[idx],box=$('#tieReBenchWarn');if(box&&w)box.innerHTML=w;} // restore this tie's persisted per-tie cap warning
   $('#mgrOut').innerHTML=''; // clear any stale manager result when the XI changes
