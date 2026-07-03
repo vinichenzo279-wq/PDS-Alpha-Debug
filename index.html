@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v8.12.3</title>
+<title>Draft Solver v8.13.0</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -184,8 +184,15 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                shows. Sits on top of the warning stack (it's the one caveat that says the OPTIMUM
                itself may be wrong), keyed to the RC actually used for that solve. Zero search impact
                — node fingerprints byte-identical to 8.12.2. (Non-iOS build for now.)
+       v8.13.0 — _rcCeilWarnHTML gets a third, green case: maxRating===RC-1 now shows a positive-framed
+               'Rating Ceiling one below the highest checked' note (same .note shell, border-color:
+               var(--good)) — the search never got near the ceiling, so this solve is very likely
+               optimal, but bumping RC by 1 would make that a certified guarantee rather than a
+               likelihood. Purely additive: the RC>rc and RC===rc branches are untouched, and the
+               function's early-return gate widened from maxRating<rc to maxRating<rc-1 to admit the
+               new case. No search/scoring logic touched.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.12.3</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.13.0</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -2966,22 +2973,28 @@ function _miniCapWarn(which,cap,exact,nodesUsed,combosChecked,mode,unitsChecked,
     +'</div></div>';
 }
 // Rating-Ceiling completeness caveat, shown in the solver section when the highest TRUE squad rating
-// seen during the search reached or passed the RC used for pruning (see maxRating in solveBest). Two
-// distinct signals:
-//   maxRating > RC  -> we actually scored a squad rating higher than the ceiling the UB assumed, so
-//                      the bound was unsound on at least one branch: better squads were likely pruned
-//                      unseen. Definitive "re-solve higher".
-//   maxRating === RC -> exact boundary. Everything we scored fit under the ceiling, but a hypothetical
-//                      higher-rated squad would rate >RC and could have been pruned before we ever
-//                      reached its leaf, so we can't certify completeness. Softer "unless you're sure".
-// Returns '' when maxRating < RC (RC never bound a real squad -> the result is sound on rating; RC
-// could even be lowered toward maxRating to search faster next time).
+// seen during the search reached, passed, or came within 1 of the RC used for pruning (see maxRating
+// in solveBest). Three distinct signals:
+//   maxRating > RC    -> we actually scored a squad rating higher than the ceiling the UB assumed, so
+//                        the bound was unsound on at least one branch: better squads were likely pruned
+//                        unseen. Definitive "re-solve higher".
+//   maxRating === RC  -> exact boundary. Everything we scored fit under the ceiling, but a hypothetical
+//                        higher-rated squad would rate >RC and could have been pruned before we ever
+//                        reached its leaf, so we can't certify completeness. Softer "unless you're sure".
+//   maxRating === RC-1 -> one below the boundary. The search never even got close to the ceiling, so
+//                        completeness is very likely, but not certifiable without raising RC by 1.
+//                        Informational/positive framing (green), not a warning.
+// Returns '' when maxRating < RC-1 (RC never came close to bounding a real squad -> the result is sound
+// on rating; RC could even be lowered toward maxRating to search faster next time).
 function _rcCeilWarnHTML(maxRating,rc){
-  if(typeof maxRating!=='number'||typeof rc!=='number'||maxRating<0||maxRating<rc)return '';
+  if(typeof maxRating!=='number'||typeof rc!=='number'||maxRating<0||maxRating<rc-1)return '';
   if(maxRating>rc){
     return '<div class="note" style="border-color:var(--bad);margin-bottom:10px"><b>\u26a0 Rating Ceiling likely hid better squads</b> \u2014 the highest-rated node checked (rating '+maxRating+') had a higher rating than the RC ('+rc+') used for speed and pruning, meaning there were likely missed solutions. Re-solve with a higher RC setting.</div>';
   }
-  return '<div class="note" style="border-color:var(--warn);margin-bottom:10px"><b>\u26a0 Rating Ceiling reached exactly</b> \u2014 the nodes checked hit the exact RC value ('+rc+') used for speed and pruning. Unless you\u2019re sure this draft cannot be rated higher, re-solve with a higher RC setting.</div>';
+  if(maxRating===rc){
+    return '<div class="note" style="border-color:var(--warn);margin-bottom:10px"><b>\u26a0 Rating Ceiling reached exactly</b> \u2014 the nodes checked hit the exact RC value ('+rc+') used for speed and pruning. Unless you\u2019re sure this draft cannot be rated higher, re-solve with a higher RC setting.</div>';
+  }
+  return '<div class="note" style="border-color:var(--good);margin-bottom:10px"><b>\u2713 Rating Ceiling one below the highest checked</b> \u2014 the highest-rated node checked (rating '+maxRating+') was less than the RC ('+rc+') by 1. This solve is likely optimal, but you can increase the RC by 1 for a true guarantee.</div>';
 }
 function _cappedWarnHTML(cap){
   const nextCap=cap*3;
