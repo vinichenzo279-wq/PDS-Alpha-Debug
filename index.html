@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v8.13.0</title>
+<title>Draft Solver v8.15.0</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -191,8 +191,24 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                likelihood. Purely additive: the RC>rc and RC===rc branches are untouched, and the
                function's early-return gate widened from maxRating<rc to maxRating<rc-1 to admit the
                new case. No search/scoring logic touched.
+       v8.14.0 — _rcCeilWarnHTML gets a fourth case: maxRating<=RC-2 (comfortably clear of the ceiling)
+               now shows a short green confirmation — 'Rating Ceiling clear — this RC setting confirms
+               this is the best possible score' — instead of staying silent. The function no longer
+               ever returns '' for valid numeric input, so callers see a note on every solve, not just
+               near-boundary ones. The RC>rc, RC===rc and RC===rc-1 branches are untouched. No
+               search/scoring logic touched.
+       v8.14.1 — Text-only: the RC-clear (>=2 below ceiling) note now appends '(highest found: N)' so
+               a user who wants to retune RC down for a faster next solve knows exactly what floor
+               maxRating actually was, instead of having to re-derive it. No logic changed.
+       v8.15.0 — _rcCeilWarnHTML takes a new xiCapped param (wired from ctx.r.capped, the main XI DFS
+               node-cap flag). When the XI search itself was capped, the amber (RC===maxRating) and
+               both green (RC===maxRating+1, RC>=maxRating+2) boxes now append a line: the RC-vs-found
+               comparison only proves what it claims once the search that produced maxRating actually
+               finished uncapped — a capped search can under-report maxRating exactly like a tight RC
+               can, so a clean gap from a capped run isn't yet trustworthy. Red (RC<maxRating) case
+               unchanged — it already says re-solve. No search/scoring logic touched.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.13.0</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.15.0</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -2972,29 +2988,43 @@ function _miniCapWarn(which,cap,exact,nodesUsed,combosChecked,mode,unitsChecked,
     +'<button class="btn gho sm" onclick="this.closest(\'.note\').remove()">Accept</button>'
     +'</div></div>';
 }
-// Rating-Ceiling completeness caveat, shown in the solver section when the highest TRUE squad rating
-// seen during the search reached, passed, or came within 1 of the RC used for pruning (see maxRating
-// in solveBest). Three distinct signals:
-//   maxRating > RC    -> we actually scored a squad rating higher than the ceiling the UB assumed, so
+// Rating-Ceiling completeness caveat, shown in the solver section every time a solve finishes,
+// comparing the highest TRUE squad rating seen during the search (maxRating, from solveBest) against
+// the RC used for pruning. Four distinct signals, from most to least concerning:
+//   maxRating > RC     -> we actually scored a squad rating higher than the ceiling the UB assumed, so
 //                        the bound was unsound on at least one branch: better squads were likely pruned
-//                        unseen. Definitive "re-solve higher".
-//   maxRating === RC  -> exact boundary. Everything we scored fit under the ceiling, but a hypothetical
+//                        unseen. Definitive "re-solve higher" (red).
+//   maxRating === RC   -> exact boundary. Everything we scored fit under the ceiling, but a hypothetical
 //                        higher-rated squad would rate >RC and could have been pruned before we ever
-//                        reached its leaf, so we can't certify completeness. Softer "unless you're sure".
+//                        reached its leaf, so we can't certify completeness. Softer "unless you're sure"
+//                        (amber).
 //   maxRating === RC-1 -> one below the boundary. The search never even got close to the ceiling, so
 //                        completeness is very likely, but not certifiable without raising RC by 1.
-//                        Informational/positive framing (green), not a warning.
-// Returns '' when maxRating < RC-1 (RC never came close to bounding a real squad -> the result is sound
-// on rating; RC could even be lowered toward maxRating to search faster next time).
-function _rcCeilWarnHTML(maxRating,rc){
-  if(typeof maxRating!=='number'||typeof rc!=='number'||maxRating<0||maxRating<rc-1)return '';
+//                        Informational/positive framing (green), spells out the +1 caveat.
+//   maxRating <= RC-2  -> comfortably clear of the ceiling on both sides. Short positive confirmation
+//                        (green) that RC never could have bound a real squad, so the result is
+//                        certifiably the best possible score.
+// Always returns a non-empty string for valid numeric inputs (no more silent '' case) — the caveat is
+// informational at every distance now, not just near the boundary.
+// xiCapped (new in v8.15.0): pass ctx.r.capped (the main XI DFS node-cap flag, NOT the bench/mgr caps).
+// When true, the amber (RC===maxRating) and both green (RC===maxRating+1, RC>=maxRating+2) cases append
+// a caveat that the completeness/optimality claim only holds once the XI search itself is run uncapped
+// ("search to the end") — a capped search can under-report maxRating just as easily as a tight RC can,
+// so a clean-looking RC gap means nothing if the search that produced it never finished. The red
+// (RC<maxRating) case doesn't get the note: it already tells the user to re-solve regardless.
+function _rcCeilWarnHTML(maxRating,rc,xiCapped){
+  if(typeof maxRating!=='number'||typeof rc!=='number'||maxRating<0)return '';
+  const capNote=xiCapped?'<div class="tiny" style="margin-top:4px">\u26a0 The XI search itself was capped at its node budget \u2014 finish a full, uncapped search (\u201csearch to the end\u201d) before treating this as certain.</div>':'';
   if(maxRating>rc){
     return '<div class="note" style="border-color:var(--bad);margin-bottom:10px"><b>\u26a0 Rating Ceiling likely hid better squads</b> \u2014 the highest-rated node checked (rating '+maxRating+') had a higher rating than the RC ('+rc+') used for speed and pruning, meaning there were likely missed solutions. Re-solve with a higher RC setting.</div>';
   }
   if(maxRating===rc){
-    return '<div class="note" style="border-color:var(--warn);margin-bottom:10px"><b>\u26a0 Rating Ceiling reached exactly</b> \u2014 the nodes checked hit the exact RC value ('+rc+') used for speed and pruning. Unless you\u2019re sure this draft cannot be rated higher, re-solve with a higher RC setting.</div>';
+    return '<div class="note" style="border-color:var(--warn);margin-bottom:10px"><b>\u26a0 Rating Ceiling reached exactly</b> \u2014 the nodes checked hit the exact RC value ('+rc+') used for speed and pruning. Unless you\u2019re sure this draft cannot be rated higher, re-solve with a higher RC setting.'+capNote+'</div>';
   }
-  return '<div class="note" style="border-color:var(--good);margin-bottom:10px"><b>\u2713 Rating Ceiling one below the highest checked</b> \u2014 the highest-rated node checked (rating '+maxRating+') was less than the RC ('+rc+') by 1. This solve is likely optimal, but you can increase the RC by 1 for a true guarantee.</div>';
+  if(maxRating===rc-1){
+    return '<div class="note" style="border-color:var(--good);margin-bottom:10px"><b>\u2713 Rating Ceiling one below the highest checked</b> \u2014 the highest-rated node checked (rating '+maxRating+') was less than the RC ('+rc+') by 1. This solve is likely optimal, but you can increase the RC by 1 for a true guarantee.'+capNote+'</div>';
+  }
+  return '<div class="note" style="border-color:var(--good);margin-bottom:10px"><b>\u2713 Rating Ceiling clear</b> \u2014 this RC setting confirms this is the best possible score (highest found: '+maxRating+').'+capNote+'</div>';
 }
 function _cappedWarnHTML(cap){
   const nextCap=cap*3;
@@ -3032,7 +3062,7 @@ function applyTie(idx){
   // itself may be wrong (missed via unsound pruning), not just "search truncated" or "bench not deep".
   // Keyed to the RC actually used for this solve (ctx.r.rcUsed), not the live slider the user may have
   // since moved. Whole-solve property, so it re-appears on every tie switch (applyTie re-renders).
-  if(ctx.r){const w=_rcCeilWarnHTML(ctx.r.maxRating,ctx.r.rcUsed);if(w){const so=$('#solveOut');if(so)so.insertAdjacentHTML('afterbegin',w);}}
+  if(ctx.r){const w=_rcCeilWarnHTML(ctx.r.maxRating,ctx.r.rcUsed,ctx.r.capped);if(w){const so=$('#solveOut');if(so)so.insertAdjacentHTML('afterbegin',w);}}
   window._solved={main,form};
   {const w=ctx.tieWarn&&ctx.tieWarn[idx],box=$('#tieReBenchWarn');if(box&&w)box.innerHTML=w;} // restore this tie's persisted per-tie cap warning
   $('#mgrOut').innerHTML=''; // clear any stale manager result when the XI changes
