@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v8.7</title>
+<title>Draft Solver v8.9</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -141,7 +141,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        e.g. v8.2.6 -> v8.2.7 is a text-only tweak; a real bug fix or minor feature/data addition
        would be v8.3.0; a major new feature would be v9.0.0.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.7</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v8.9</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -1044,8 +1044,7 @@ function clearDB(){if(!confirm('Clear the ENTIRE player database? Solving and na
 function loadDefaultDB(){playerDB=DEFAULT_DB.map(p=>({name:p.name,rating:p.rating,type:p.type,nation:p.nation,league:p.league,club:p.club,pos:(p.pos||[]).map(normPos)}));rebuildRarity();
   setDBStatus('Default database loaded \u2014 '+playerDB.length+' cards (icons + heroes + all 20 Prem clubs). Type a name to search. Import to add your own, Export to save this set. \u26a0 positions are the least-checked field.','var(--good)');}
 function resetDB(){if(!confirm('Reset the player database to default? This replaces your current database.'))return;loadDefaultDB();_dbSave();}
-function exportDB(){const blob=new Blob([JSON.stringify(playerDB)],{type:'application/json'}),a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);a.download='pacwyn-db.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1500);}
+function exportDB(){_namedDownload(new Blob([JSON.stringify(playerDB)],{type:'application/json'}),'pacwyn-db','json');}
 if(DEFAULT_DB.length)loadDefaultDB();
 // Persist DB edits (player + manager) across reloads, separate from the draft state.
 const _DB_KEY='pacwyn_db_v1';
@@ -1580,7 +1579,7 @@ function renderSlotEditor(){
     const st=slotState(s);
     $('#slotNote').innerHTML=st==='bust'?'Marked <b>busted</b> \u2014 ignored by the solver. Add a player to un-bust.':
       cs.length===0?'Empty. Add 1 player to commit, or 2\u20135 to keep a hold.':
-      cs.length===1?'1 player \u2014 <b>committed</b>.':cs.length+' players \u2014 <b>hold</b> (the solver fields the best one; the rest are bench insurance).';
+      cs.length===1?'1 player \u2014 <b>committed</b>.':cs.length+' players \u2014 <b>hold</b>.';
   }
   let ph='';
   if(isCap&&_capPick){const c=cards.find(x=>x.id===_capPick.id);
@@ -3119,8 +3118,47 @@ function analyzeManagerDepth(tie,form,benchCards){
   return {clean,subbed2,plus1,analyzed:true,capped:!!(r2&&r2.capped),exact,nodes:_tieNodes};
 }
 function cleanMgrCount(sc){let n=0;for(const m of MANAGER_DB){if(!sc.nationSet.has(m.nation)&&!sc.leagueSet.has(m.league))n++;}return n;}
+// Print-only minimum-swap re-layout for a solved XI. The solver scores a squad as a SET, so among
+// position-equivalent cards it returns an ARBITRARY slot order -- which can print as "move A to CM,
+// move B to CDM" churn that changes nothing. This re-assigns the SAME 11 cards to the SAME formation
+// slots to minimise how many sit away from where they were drafted (their board hold), so the printed
+// layout reads as few moves as possible. It cannot change WHICH cards are in the XI, the score, chem,
+// or anything the solver computed -- only which legal slot each card is shown in. Returns a new xi
+// array (same members) or the input unchanged if no fully-legal perfect layout exists.
+function _minSwapLayout(xi,slots){
+  const n=slots.length,BIG=1e6,cardsA=xi.slice();
+  if(cardsA.length!==n||cardsA.some(c=>!c))return xi;
+  // "home" slot index = the formation slot this card currently occupies in the solved layout that is
+  // ALSO consistent with its drafted position; we reward keeping a card where it already legally sits,
+  // so the arranger only moves cards when a move genuinely reduces total displacement.
+  const homeIdx={};cardsA.forEach((c,i)=>{if(c&&homeIdx[c.id]===undefined)homeIdx[c.id]=i;});
+  const cost=cardsA.map(c=>slots.map((sl,si)=>{
+    if(!(c.pos||[]).includes(sl))return BIG;      // illegal slot for this card
+    return homeIdx[c.id]===si?0:1;                // 0 to stay put, 1 to move -> minimise moves
+  }));
+  const u=new Array(n+1).fill(0),v=new Array(n+1).fill(0),pp=new Array(n+1).fill(0),way=new Array(n+1).fill(0);
+  for(let i=1;i<=n;i++){
+    pp[0]=i;let j0=0;const minv=new Array(n+1).fill(Infinity),used=new Array(n+1).fill(false);
+    do{
+      used[j0]=true;const i0=pp[j0];let delta=Infinity,j1=-1;
+      for(let j=1;j<=n;j++){ if(used[j])continue;
+        const cur=cost[i0-1][j-1]-u[i0]-v[j];
+        if(cur<minv[j]){minv[j]=cur;way[j]=j0;}
+        if(minv[j]<delta){delta=minv[j];j1=j;} }
+      for(let j=0;j<=n;j++){ if(used[j]){u[pp[j]]+=delta;v[j]-=delta;} else minv[j]-=delta; }
+      j0=j1;
+    }while(pp[j0]!==0);
+    do{const j1=way[j0];pp[j0]=pp[j1];j0=j1;}while(j0!==0);
+  }
+  const assign=new Array(n).fill(-1);
+  for(let j=1;j<=n;j++){ if(pp[j]>0)assign[pp[j]-1]=j-1; }
+  let total=0;for(let ci=0;ci<n;ci++)total+=cost[ci][assign[ci]];
+  if(total>=BIG)return xi;                          // no legal perfect layout -> leave as solved
+  const out=new Array(n);for(let ci=0;ci<n;ci++)out[assign[ci]]=cardsA[ci];
+  return out.every(Boolean)?out:xi;
+}
 function renderSummary(main,form,r,ms,cleanMgrs,idx){
-  const sc=main.sc,slotCards=main.xi;
+  const sc=main.sc,slotCards=_minSwapLayout(main.xi,form.slots); // print-only min-swap layout; main.xi itself is left exactly as solved
   let xiHtml='';
   for(let i=0;i<form.slots.length;i++){
     const c=slotCards[i];
@@ -3212,8 +3250,7 @@ function wireMgrCombo(){
 wireMgrCombo();
 const MGR_LG={"icon":"Icons","icons":"Icons","premier league":"England Premier League","english prem":"England Premier League","english premier league":"England Premier League","la liga":"Spain LaLiga","spanish league":"Spain LaLiga","serie a":"Italy Serie A","italian serie a":"Italy Serie A","italian league":"Italy Serie A","bundesliga":"Germany Bundesliga","german bundesliga":"Germany Bundesliga","ligue 1":"France Ligue 1","french league":"France Ligue 1","eredivisie":"Netherlands Eredivisie","liga portugal":"Portugal Primeira","mls":"USA MLS","turkish league":"Turkey Super Lig","saudi league":"Saudi Pro League","greek league":"Greece Super League","efl championship":"England Championship","argentinian league":"Argentina Primera","argentine league":"Argentina Primera"};
 function canonMgrLeague(l){if(!l)return l;const ex=LEAGUE_NAMES.find(x=>x.toLowerCase()===l.toLowerCase());if(ex)return ex;return MGR_LG[l.toLowerCase()]||canonLeague(l);}
-function exportManagers(){const blob=new Blob([JSON.stringify(MANAGER_DB,null,1)],{type:'application/json'}),a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);a.download='pacwyn-managers.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1500);}
+function exportManagers(){_namedDownload(new Blob([JSON.stringify(MANAGER_DB,null,1)],{type:'application/json'}),'pacwyn-managers','json');}
 function setMgrDbStatus(msg,col){const el=$('#mgrDbStatus');if(el){el.textContent=msg;el.style.color=col||'var(--mut)';}}
 function resetManagers(){if(!confirm('Reset the manager database to default? This replaces your current database.'))return;MANAGER_DB=DEFAULT_MGR_DB.map(m=>({name:m.name,nation:m.nation,league:m.league}));setMgrDbStatus('Default managers restored \u2014 '+MANAGER_DB.length+' in the database. Re-solve to apply.','var(--good)');_dbSave();}
 function clearManagers(){if(!confirm('Clear the ENTIRE manager database? Bench insurance and manager counts will have nothing to check against until you reset to default.'))return;MANAGER_DB=[];setMgrDbStatus('Manager database cleared \u2014 manual entry only. (Reset to default to bring it back.)');_dbSave();}
@@ -4412,7 +4449,7 @@ function judgeSlotInline(preCtx){
       } else {
         // ---- NO COVER: positions are still missing and this board doesn't help ----
         _urgentPos=new Set(missingNow);
-        urgent='<div class="tiny" style="color:var(--bad);margin-top:6px">\u26a0 Your XI is still missing <b>'+missingNow.join(', ')+'</b> and nothing here covers it \u2014 you\'ll need that from a later board.</div>';
+        urgent='<div class="tiny" style="color:var(--bad);margin-top:6px">\u26a0 Your XI is still missing <b>'+missingNow.join(', ')+'</b> and nothing here covers it \u2014 '+(pendingAfter>0?'you\'ll need that from a later board.':'you cannot fill a full squad in this draft.')+'</div>';
       }
 
       // ---- URGENCY note ----
@@ -4570,7 +4607,7 @@ function judgeSlotInline(preCtx){
 
   const verdict=soleForce?'TAKE':rawVerdict;
   const detail=soleForce?('<b>'+esc(cardName(soleForce))+'</b> is your only card that can fill a required position \u2014 no choice here, commit it.'):rawDetail;
-  const ctxNote=ctx?(ctx.ok?'<span class="tiny" style="color:var(--mut)"> \u00b7 judged against your projected XI (starters boosted, bench penalised)</span>':'<span class="tiny" style="color:var(--mut)"> \u00b7 early-draft weights (no complete XI yet)</span>'):'';
+  const ctxNote=ctx?(ctx.ok?'<span class="tiny" style="color:var(--mut)"> \u00b7 judged against your projected XI (starters boosted, bench penalised)</span>':(pendingCount()<=6?'':'<span class="tiny" style="color:var(--mut)"> \u00b7 early-draft weights (no complete XI yet)</span>')):'';
   let head;
   if(isCap){
     head='<div class="bigrow"><div class="tot" style="font-size:26px">TAKE</div></div><div class="tiny" style="color:var(--ink)">'+(opts.length>1?detail:'Only one option \u2014 commit it as captain. (Skip the whole board if everything here is too weak to justify picking.)')+'</div>';
@@ -4647,7 +4684,7 @@ function judgeSlotInline(preCtx){
     }
   }
   el.innerHTML='<div class="summary" style="margin:6px 0 2px">'+head+projNote+soleNote+urgent+starterNote+_poolSizeWarning()+'<hr><div class="divh">Helper rating</div>'+rankRows(ranked)+'<button class="btn gho sm" style="margin-top:8px" onclick="runHelper()">\u21bb Re-check</button>'+helperDeepBtn
-    +'<div class="tiny" style="margin-top:8px">Rated against your weights \u2014 feel free to overrule any call you don\u2019t agree with. It\u2019s your draft.</div>'+inlineHoldNote+'</div>';
+    +'<div class="tiny" style="margin-top:8px">Rated against your weights \u2014 feel free to overrule any call you don\u2019t agree with. It\u2019s your draft. Evaluations are generated on a per-hold basis, so re-evaluate if you make a change elsewhere.</div>'+inlineHoldNote+'</div>';
 }
 
 /* ============================ SAVE / LOG / IMPORT ============================ */
@@ -4736,12 +4773,24 @@ function restoreLocal(){
   const fg=$('#fgrid');if(fg&&typeof sortForm==='function')sortForm(fg.dataset.m||'rank');
   return restored;
 }
-function downloadLog(){
-  const txt=$('#log').value||JSON.stringify(buildState(),null,1);
-  const blob=new Blob([txt],{type:'text/plain'}),a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);a.download='pacwyn-draft-'+Date.now()+'.txt';
+// Ask the user to name an export. Blank/Cancel keeps the default. Sanitises to a safe filename and
+// appends the extension if the user didn't. Purely cosmetic — file CONTENTS are untouched.
+function _namedDownload(blob,defaultName,ext){
+  const name0=prompt('Name this file:',defaultName);
+  if(name0===null)return;                           // Cancel -> abort, download nothing
+  let name=name0;
+  name=String(name).trim().replace(/[\\/:*?"<>|]+/g,'-').replace(/\s+/g,'-');
+  if(!name)name=defaultName;
+  if(!name.toLowerCase().endsWith('.'+ext))name+='.'+ext;
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);a.download=name;
   document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+}
+function downloadLog(){
+  const txt=$('#log').value||JSON.stringify(buildState(),null,1);
+  const blob=new Blob([txt],{type:'text/plain'});
+  _namedDownload(blob,'pacwyn-draft-'+Date.now(),'txt');
 }
 // Exported .txt files are sometimes pure JSON (buildState() only), and sometimes JSON followed
 // by the human-readable solve summary that refreshLog() appends after it (see downloadLog()).
