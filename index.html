@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v12.2.1</title>
+<title>Draft Solver v12.3.2</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -775,8 +775,63 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                without positional reference. Also added the missing description paragraph under
                Solver Node Cap (millions) -- it was the only node-cap field of the four (Solver /
                Helper / Bench / Manager) without one, now consistent with the others' style.
+       v12.3.0 — LOGIC CHANGE (UI-driven): search diversity's fixed preset menu (Off / Light /
+               Balanced / Multi / Multi6/8/16 / Aggr25/Aggr10 / Full random) is replaced by two
+               independent controls -- a %divstatic slider (0-100 in 5% steps) and a shuffle-pass
+               count input (0-256) -- so any combination is reachable, not just the ~10 presets.
+               Motivation: the presets assumed a small set of splits covered the useful range and
+               anything else wasn't worth exposing (an implicit point of diminishing returns).
+               New data contradicts that -- which combo helps varies per draft with no consistent
+               falloff, so clamping the choice to a menu was leaving real upside unreachable.
+               Mechanically this is a thin swap: DIVERSITY_MODES (the preset table) and
+               FULL_RANDOM_PASSES are removed; _diversityMode()'s single dropdown read is replaced
+               by _divPct()/_shuffleCount() reading the two new inputs, combined into a plan by
+               _diversityPlan() via the SAME mkPlan(divFrac,nShuffles) helper every preset already
+               used internally -- so every plan an old preset could produce (e.g. old mode 3 ==
+               50%/4 shuffles) is still exactly reachable on the new dials, plus everything
+               between and beyond them. solveWithDiversity now takes the built `plan` directly
+               instead of a mode index, and derives its result label from the plan's actual split
+               instead of a preset name. Old saved states (diversityMode key) are migrated to
+               the equivalent {%divstatic, shuffles} pair on load so restored sessions behave
+               identically; new saves use the two new keys. Solver core (solveBest, phase-loop
+               seeding/merge/early-exit guarantees) is completely untouched -- same >= plain-
+               divstatic guarantee, same proven-optimum early exit, same tie-union logic.
+       v12.3.1 — UI tweak only, no logic changes. Search diversity tooltip was carrying the
+               v12.3 rationale (preset-menu history, testing results, no-free-lunch note) --
+               too much for an in-app tooltip. Trimmed to just the mechanics (what the two
+               dials do); the fuller explanation stays in the code comment above
+               solveWithDiversity and in this changelog.
+       v12.3.2 — DOCUMENTATION + one correctness correction, no solver-core changes. Recording the
+               methodology behind the v12.1-v12.3 diversity work so future changes to these numbers
+               start from evidence, not vibes. External harness (buildResumableSolver port of
+               solveBest, phase-for-phase identical to solveWithDiversity's loop) ran 30 hard, capped
+               drafts at a fixed 2M-node total budget, both across the old named presets and across a
+               full (%divstatic x #shuffles) grid (10-90% x 1-32 passes). Findings: (1) restart count
+               has a real elbow -- net score gain climbs 1->4->8 passes, peaks around 16-24, then
+               gives ground back by 32 as each pass's slice gets too thin to reach a genuinely
+               different subtree (multi16 was the best single preset tested: 5 wins/1 loss/+4 net
+               over 30 drafts). (2) The old "Aggr25/Aggr10" direction (shrink %divstatic, hand the
+               rest to shuffles) is a NET LOSER, not the near-free upside it was predicted to be --
+               aggr25 -4 net, aggr10 -9 net, and a plain 10% divstatic share lost on the grid at
+               every shuffle count tested (1 through 32). Root cause, confirmed on a specific
+               losing seed: divstatic's own best-first trajectory does not always plateau early --
+               sometimes the back half of ITS OWN budget is still finding better incumbents via
+               continued pruning, not just proving optimality already found. Cutting its share
+               throws that away, and random-order shuffle passes essentially never retrace the
+               specific path that would have found it. (3) This means the "result is never worse
+               than pure divstatic (Off) at the same total budget" claim in the v12.0-era comments
+               and the UI tooltip is WRONG in general and is corrected below/in the tooltip -- the
+               real, still-true guarantee is narrower: each phase within a SINGLE diversity run
+               can only match or improve on the phases before it (seeded incumbent, monotonic
+               within that run), NOT that splitting the budget away from an uninterrupted single
+               divstatic pass can't ever cost points relative to that uninterrupted pass. (4)
+               Practical takeaway folded into the UI copy below: keep %divstatic at 50% or higher;
+               low %divstatic (<=25%) tested as a consistent net negative regardless of shuffle
+               count and isn't recommended at any setting. 8-16 shuffle passes is the best-tested
+               range at moderate-to-hard node caps; higher counts are untested past 32 and may
+               re-enter the "too thin per pass" regime sooner on smaller budgets.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v12.2.1</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v12.3.2</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -938,20 +993,12 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
         <p class="tiny" style="margin:4px 0 0">Only search for squads reaching this final score (incl. manager +2). 0 = off.</p>
       </div>
       <div style="margin-top:14px">
-        <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Search diversity</label>
-        <select id="diversityMode" style="width:100%" onchange="saveAdvSettings();_solveCache=null;">
-          <option value="0" selected>Off &mdash; pure divstatic (default, fastest)</option>
-          <option value="1">Light &mdash; divstatic 75% + 1 random pass 25%</option>
-          <option value="2">Balanced &mdash; divstatic 50% + 1 random pass 50%</option>
-          <option value="3">Multi &mdash; divstatic 50% + 4 random passes</option>
-          <option value="5">Multi6 &mdash; divstatic 50% + 6 random passes</option>
-          <option value="6">Multi8 &mdash; divstatic 50% + 8 random passes</option>
-          <option value="7">Multi16 &mdash; divstatic 50% + 16 random passes</option>
-          <option value="8">Aggr25 &mdash; divstatic 25% + 4 random passes</option>
-          <option value="9">Aggr10 &mdash; divstatic 10% + 4 random passes</option>
-          <option value="4">Full random &mdash; 32 independent random passes (best of many)</option>
-        </select>
-        <p class="tiny" style="margin:4px 0 0">Splits the <b>same</b> node cap into phases: divstatic first (strong incumbent), then one or more <b>randomly-ordered</b> passes that explore different regions of the tree, keeping whichever pass scored highest. Purely optional upside &mdash; the result is never worse than Off at the same budget. On hard, capped drafts a diversity pass beat pure divstatic on ~13% of tests (+1 to +3), so it&rsquo;s worth a try when a solve caps out and you suspect a better squad; leave <b>Off</b> for normal use. Any pass that finishes the whole tree still returns the proven optimum. <b>Full random</b> skips divstatic entirely and splits the whole budget into 32 independent reshuffles instead of one long one &mdash; more independent rolls of the dice rather than one deep walk down a single random order, so it's the pick most likely to get lucky fast on a huge board. <b>Multi6/8/16</b> keep divstatic's 50% share but split the remaining half into more, smaller shuffle passes &mdash; more independent short tries vs. one long one. <b>Aggr25/Aggr10</b> instead shrink divstatic's own share (to 25% or 10%) and give the freed budget to 4 shuffle passes, on the theory that divstatic converges on a strong incumbent early and most of its remaining budget goes to proving optimality rather than finding a better squad.</p>
+        <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:block">Search diversity &mdash; <span id="divPctLabel" style="color:var(--ink);font-weight:800">100%</span> divstatic</label>
+        <input type="range" id="divPctSlider" min="0" max="100" step="5" value="100" style="width:100%;margin:0 0 2px;accent-color:var(--cyan)" oninput="_updDivPctLbl()" onchange="saveAdvSettings();_solveCache=null;">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--mut);margin-bottom:10px"><span>0% (all shuffle)</span><span>50 / 50</span><span>100% (all divstatic)</span></div>
+        <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Shuffle passes (0&ndash;256)</label>
+        <input type="number" id="shuffleCount" min="0" max="256" value="0" inputmode="numeric" style="width:100%" onblur="_clampShuffleCount(this);saveAdvSettings();_solveCache=null;">
+        <p class="tiny" style="margin:4px 0 0">Splits the <b>same</b> node cap into phases: a <b>%divstatic</b> share first (best-first, establishes a strong incumbent), then that many even, independently-seeded <b>shuffle</b> passes exploring different regions of the tree &mdash; keeping whichever phase scored highest. Any phase that finishes its whole tree still returns the proven optimum. Note: this can occasionally score <i>below</i> 0 shuffle passes at the same budget &mdash; shrinking %divstatic isn't free, since divstatic itself sometimes still needs its later budget to improve, not just to prove it's already optimal. Tested sweet spot: <b>50&ndash;75% divstatic with 8&ndash;16 shuffle passes</b>; low %divstatic (&le;25%) tested as a net loss regardless of pass count, and gains from more passes taper off past ~16&ndash;24.</p>
       </div>
       <div style="margin-top:14px">
         <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Bench analysis depth</label>
@@ -1561,8 +1608,8 @@ function _clearSolve(){lastSolve=null;window._solved=null;window._solveCtx=null;
    Stamped into lastSolve (settings/steps) at applyTie/emergency time, so it persists through
    save/export/restore with everything else and refreshLog can print it. */
 let _recActions=[],_recBase=null,_recCurSettings=null;
-function _recSnapshot(){return {rc:getRatingCeil(),capM:Math.round(getNodeCap()/1000000),benchCapM:Math.round(getBenchNodeCap()/1000000),mgrCapM:Math.round(getMgrNodeCap()/1000000),target:_targetScore()||0,bench:_benchMode(),mgrDepth:_mgrFrac(),skipTies:_skipTies(),diversity:_diversityMode()};}
-function _recFmtSettings(s){return 'RC '+s.rc+' \u00b7 node cap '+s.capM+'M \u00b7 bench cap '+s.benchCapM+'M \u00b7 mgr cap '+s.mgrCapM+'M \u00b7 target '+(s.target?s.target:'off')+' \u00b7 bench speed '+s.bench+' \u00b7 mgr depth '+(typeof s.mgrDepth==='number'?s.mgrDepth.toFixed(2):s.mgrDepth)+' \u00b7 skip ties '+(s.skipTies?'on':'off')+' \u00b7 diversity '+((s.diversity|0)||'off');}
+function _recSnapshot(){return {rc:getRatingCeil(),capM:Math.round(getNodeCap()/1000000),benchCapM:Math.round(getBenchNodeCap()/1000000),mgrCapM:Math.round(getMgrNodeCap()/1000000),target:_targetScore()||0,bench:_benchMode(),mgrDepth:_mgrFrac(),skipTies:_skipTies(),divPct:_divPct(),shuffles:_shuffleCount()};}
+function _recFmtSettings(s){return 'RC '+s.rc+' \u00b7 node cap '+s.capM+'M \u00b7 bench cap '+s.benchCapM+'M \u00b7 mgr cap '+s.mgrCapM+'M \u00b7 target '+(s.target?s.target:'off')+' \u00b7 bench speed '+s.bench+' \u00b7 mgr depth '+(typeof s.mgrDepth==='number'?s.mgrDepth.toFixed(2):s.mgrDepth)+' \u00b7 skip ties '+(s.skipTies?'on':'off')+' \u00b7 diversity '+(s.shuffles?(s.divPct+'%/'+s.shuffles+'sh'):'off');}
 function _recNoteSettingsDrift(){
   const cur=_recSnapshot();
   if(_recCurSettings){
@@ -1575,7 +1622,7 @@ function _recNoteSettingsDrift(){
     if(cur.bench!==p.bench)d.push('bench speed '+p.bench+'\u2192'+cur.bench);
     if(cur.mgrDepth!==p.mgrDepth)d.push('mgr depth '+p.mgrDepth.toFixed(2)+'\u2192'+cur.mgrDepth.toFixed(2));
     if(cur.skipTies!==p.skipTies)d.push('skip ties '+(p.skipTies?'on':'off')+'\u2192'+(cur.skipTies?'on':'off'));
-    if(cur.diversity!==p.diversity)d.push('diversity '+((p.diversity|0)||'off')+'\u2192'+((cur.diversity|0)||'off'));
+    if(cur.divPct!==p.divPct||cur.shuffles!==p.shuffles)d.push('diversity '+(p.shuffles?(p.divPct+'%/'+p.shuffles+'sh'):'off')+'\u2192'+(cur.shuffles?(cur.divPct+'%/'+cur.shuffles+'sh'):'off'));
     if(d.length)_recActions.push('settings changed: '+d.join(', '));
   }
   _recCurSettings=cur;
@@ -2756,11 +2803,17 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
 // incumbent), and the remaining phases are seeded-shuffle passes (see solveBest's diversitySeed)
 // that walk different regions of the tree. Every phase is seeded with the best score+lineups found
 // so far (solveBest's seedBest/seedXIs), so a later phase's pruning starts hot and it can only ADD
-// lineups/score, never lose the incumbent. We keep whichever phase scored highest (ties merged), so
-// the high variance of shuffling is pure upside — the wrapper's result is >= plain divstatic by
-// construction on the same budget, and equals it whenever the shuffles don't find anything better.
-// If ANY phase completes its whole tree (not capped), that result is the proven optimum and we stop
-// early. Phase plans below are exactly the ones measured (see CHANGELOG): fractions of the budget.
+// lineups/score relative to the phases BEFORE it in this same run — never lose ground already
+// found earlier in the run. If ANY phase completes its whole tree (not capped), that result is
+// the proven optimum and we stop early.
+// CORRECTED v12.3.2 (see CHANGELOG): this does NOT mean the wrapper's result is >= a plain,
+// uninterrupted divstatic solve at the same total budget — that was the original claim here and
+// testing showed it's false. Phase 1 only gets a FRACTION of the budget, and divstatic's own
+// best-first trajectory doesn't always plateau early; sometimes the back half of an uninterrupted
+// run is still finding better incumbents, not just proving optimality. Cutting phase 1 short to
+// make room for shuffle passes can lose that, and shuffle passes rarely retrace the specific path
+// that would have found it. So: monotonic WITHIN a diversity run, not >= Off at equal budget.
+// Phase plans below are exactly the ones measured (see CHANGELOG): fractions of the budget.
 // helper: build a {divstatic frac} + N even shuffle passes plan, e.g. mkPlan(.5,4) ==
 // mode 3's plan (50% divstatic + 4x12.5% shuffles). Used for the multi6/8/16 and aggrNN_4
 // variants below so the fraction math can't drift out of sync with the label.
@@ -2770,38 +2823,17 @@ function mkPlan(divFrac,nShuffles){
   for(let i=0;i<nShuffles;i++)plan.push({shuffle:true,frac:each});
   return plan;
 }
-// v12.2 — how many independent reshuffles "Full random" splits its budget across (was 1). See
-// DIVERSITY_MODES[4] comment below for the reasoning.
-const FULL_RANDOM_PASSES=32;
-const DIVERSITY_MODES={
-  0:{label:'Off (pure divstatic)',plan:null},
-  1:{label:'Light (divstatic 75% + 1 shuffle 25%)',plan:[{shuffle:false,frac:.75},{shuffle:true,frac:.25}]},
-  2:{label:'Balanced (divstatic 50% + 1 shuffle 50%)',plan:[{shuffle:false,frac:.5},{shuffle:true,frac:.5}]},
-  3:{label:'Multi (divstatic 50% + 4 shuffles 12.5% each)',plan:mkPlan(.5,4)},
-  // v12.2 — Full random was a single shuffle pass burning the WHOLE budget on one fixed random
-  // order: one reshuffle, then an exhaustive/capped dive through that one tree. That's one long
-  // walk, not many chances to get lucky. Split into FULL_RANDOM_PASSES (32) independent reshuffles
-  // instead — each gets 1/32 of the budget and its own fresh seed, so a squad can be hit by any
-  // one of 32 independent random orders rather than needing the single chosen order to wander into
-  // it. Same total budget, same zero-divstatic-influence "pure random" spirit, more independent
-  // draws instead of one deep one.
-  4:{label:`Full random (${FULL_RANDOM_PASSES} shuffles, ~${(100/FULL_RANDOM_PASSES).toFixed(1)}% each)`,plan:mkPlan(0,FULL_RANDOM_PASSES)},
-  // v12.1 — restart/portfolio test plan (see CHANGELOG): same 50/50 split as mode 3 but with
-  // more, smaller shuffle passes, to look for the point where more independent draws stops
-  // paying off (per-pass budget too small to reach a meaningfully different subtree).
-  5:{label:'Multi6 (divstatic 50% + 6 shuffles ~8.3% each)',plan:mkPlan(.5,6)},
-  6:{label:'Multi8 (divstatic 50% + 8 shuffles 6.25% each)',plan:mkPlan(.5,8)},
-  7:{label:'Multi16 (divstatic 50% + 16 shuffles 3.125% each)',plan:mkPlan(.5,16)},
-  // "give divstatic less" variants: divstatic converges to a strong incumbent early (most nodes
-  // go to PROVING optimality, not finding it), so shrinking its slice and handing the freed
-  // budget to more shuffle passes should be close to free upside if divstatic still lands a
-  // strong-enough incumbent well within its smaller share.
-  8:{label:'Aggr25 (divstatic 25% + 4 shuffles 18.75% each)',plan:mkPlan(.25,4)},
-  9:{label:'Aggr10 (divstatic 10% + 4 shuffles 22.5% each)',plan:mkPlan(.10,4)}
-};
-function solveWithDiversity(form,cards,cap,ratingCeil,seedBest,seedXIs,skipTies,divMode){
-  const mode=DIVERSITY_MODES[divMode|0];
-  if(!mode||!mode.plan){ // OFF (or unknown) -> untouched single divstatic solve
+// v12.3 — the named presets below (Light/Balanced/Multi/Aggr.../Full random) assumed there was a
+// small set of splits worth offering and that anything else was unlikely to help — i.e. some point
+// of diminishing returns past a "good enough" %divstatic / shuffle-count combo. Broader data showed
+// that assumption was wrong: which combo helps varies per draft, with no consistent falloff, so
+// clamping the choice to a fixed menu was leaving useful combinations unreachable. The two knobs are
+// now exposed directly instead of bundled into presets: _divPct() (0-100, 5% steps) and
+// _shuffleCount() (0-256) feed the same mkPlan(divFrac,nShuffles) helper the presets used
+// internally, so every plan any old preset could produce is still reachable (and everything
+// between/beyond them now is too). See _diversityPlan() below.
+function solveWithDiversity(form,cards,cap,ratingCeil,seedBest,seedXIs,skipTies,plan){
+  if(!plan||!plan.length){ // no shuffle passes -> untouched single divstatic solve
     return solveBest(form,cards,cap,ratingCeil,seedBest,seedXIs,skipTies);
   }
   // deterministic per-draft base seed so repeated solves of the same board are reproducible
@@ -2810,8 +2842,11 @@ function solveWithDiversity(form,cards,cap,ratingCeil,seedBest,seedXIs,skipTies,
   let best=(seedBest!==undefined?seedBest:-1),bestXIs=(seedXIs?seedXIs.slice():[]);
   let totalNodes=0,anyCapped=false,merged=null,shufIdx=0;
   const phaseLog=[];
-  for(let p=0;p<mode.plan.length;p++){
-    const ph=mode.plan[p];
+  const _nShuf=plan.filter(ph=>ph.shuffle).length;
+  const _divPh=plan.find(ph=>!ph.shuffle);
+  const label=(_divPh?Math.round(_divPh.frac*100):0)+'% divstatic + '+_nShuf+' shuffle pass'+(_nShuf===1?'':'es');
+  for(let p=0;p<plan.length;p++){
+    const ph=plan[p];
     const budget=Math.max(1,Math.round(cap*ph.frac));
     const divSeed=ph.shuffle?((baseSeed+ (0x9E3779B1*(++shufIdx)))>>>0):undefined;
     const r=solveBest(form,cards,budget,ratingCeil,
@@ -2840,12 +2875,12 @@ function solveWithDiversity(form,cards,cap,ratingCeil,seedBest,seedXIs,skipTies,
     }
     if(merged===null&&r.best>=0){merged=r;} // first phase that achieved a real score anchors the result object
     if(!r.capped){ anyCapped=false; // a phase finished its whole tree -> proven optimum for the draft, stop
-      return Object.assign({},merged,{best,bestXIs,nodes:totalNodes,capped:false,rcUsed:merged.rcUsed,maxRating:merged.maxRating,slots:merged.slots,diversity:{mode:divMode,label:mode.label,phases:phaseLog,provenComplete:true}});
+      return Object.assign({},merged,{best,bestXIs,nodes:totalNodes,capped:false,rcUsed:merged.rcUsed,maxRating:merged.maxRating,slots:merged.slots,diversity:{label,phases:phaseLog,provenComplete:true}});
     }
     anyCapped=true;
   }
   if(!merged)return solveBest(form,cards,cap,ratingCeil,seedBest,seedXIs,skipTies); // no phase scored (all infeasible) — fall back
-  return Object.assign({},merged,{best,bestXIs,nodes:totalNodes,capped:anyCapped,diversity:{mode:divMode,label:mode.label,phases:phaseLog,provenComplete:false}});
+  return Object.assign({},merged,{best,bestXIs,nodes:totalNodes,capped:anyCapped,diversity:{label,phases:phaseLog,provenComplete:false}});
 }
 
 function greedyPartial(form){
@@ -3130,7 +3165,14 @@ function _hideSolverOverlay(){
 // slider, with the warnings back. Default-on is expressed as "missing or checked" so older saved
 // states (no checkbox key) also default to auto.
 function _skipTies(){const cb=$('#skipTies');return !!(cb&&cb.checked);} // default OFF
-function _diversityMode(){const el=$('#diversityMode');const v=el?parseInt(el.value,10):0;return(isNaN(v)||v<0||v>9)?0:v;} // default 0 = OFF (pure divstatic); v12.1 adds modes 5-9 (multi6/8/16, aggr25, aggr10)
+function _divPct(){const el=$('#divPctSlider');const v=el?parseInt(el.value,10):100;return(isNaN(v)||v<0)?100:Math.min(100,v);} // default 100 = all-divstatic (matches old "Off")
+function _shuffleCount(){const el=$('#shuffleCount');const v=el?parseInt(el.value,10):0;return(isNaN(v)||v<0)?0:Math.min(256,v);} // default 0 = no shuffle passes (matches old "Off")
+function _clampShuffleCount(el){let v=parseInt(el.value,10);if(isNaN(v)||v<0)v=0;if(v>256)v=256;el.value=v;}
+function _updDivPctLbl(){const el=$('#divPctSlider'),lbl=$('#divPctLabel');if(el&&lbl)lbl.textContent=el.value+'%';}
+// Builds the phase plan solveWithDiversity runs, straight from the two independent dials -- no
+// preset table in between (see v12.3 changelog). 0 shuffle passes -> null, i.e. identical to the
+// old "Off" (plain single divstatic solve, solveWithDiversity's fast path).
+function _diversityPlan(){const n=_shuffleCount();return n===0?null:mkPlan(_divPct()/100,n);}
 function _autoRCon(){const cb=$('#rcAutoOptimal');return !cb||cb.checked;}
 function _applyAutoRC(){
   if(!_autoRCon())return null;
@@ -3191,7 +3233,8 @@ function saveAdvSettings(){
     const rc=$('#ratingCeilSlider'),nc=$('#nodeCapInput'),bm=$('#benchMode'),md=$('#mgrDepth');
     const ar=$('#rcAutoOptimal');
     const bnc=$('#benchNodeCapInput'),mnc=$('#mgrNodeCapInput'),hnc=$('#helperNodeCapInput');
-    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true, skipTies:(($('#skipTies')||{}).checked||false),diversityMode:(($('#diversityMode')||{}).value||'0'),benchNodeCap:bnc?bnc.value:undefined,mgrNodeCap:mnc?mnc.value:undefined,helperNodeCap:hnc?hnc.value:undefined};
+    const dp=$('#divPctSlider'),sc=$('#shuffleCount');
+    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true, skipTies:(($('#skipTies')||{}).checked||false),divPct:dp?dp.value:undefined,shuffleCount:sc?sc.value:undefined,benchNodeCap:bnc?bnc.value:undefined,mgrNodeCap:mnc?mnc.value:undefined,helperNodeCap:hnc?hnc.value:undefined};
     localStorage.setItem(_ADV_SAVE_KEY,JSON.stringify(d));
   }catch(e){}
 }
@@ -3217,7 +3260,19 @@ function saveAdvSettings(){
     if(saved.rcAuto!==undefined){const ar=$('#rcAutoOptimal');if(ar)ar.checked=!!saved.rcAuto;}
     
     if(saved.skipTies!==undefined){var _st=$('#skipTies'); if(_st)_st.checked=!!saved.skipTies;}
-    if(saved.diversityMode!==undefined){var _dv=$('#diversityMode'); if(_dv)_dv.value=String(saved.diversityMode);}
+    if(saved.divPct!==undefined||saved.shuffleCount!==undefined){
+      if(saved.divPct!==undefined){var _dp=$('#divPctSlider'); if(_dp)_dp.value=saved.divPct;}
+      if(saved.shuffleCount!==undefined){var _sc=$('#shuffleCount'); if(_sc)_sc.value=saved.shuffleCount;}
+    }else if(saved.diversityMode!==undefined){
+      // migrate a pre-v12.3 save: the old dropdown picked one of a fixed set of preset
+      // {%divstatic, shuffle count} pairs -- translate its index to the equivalent values on the
+      // two new independent dials so a restored session behaves identically.
+      var _migMap={0:[100,0],1:[75,1],2:[50,1],3:[50,4],4:[0,32],5:[50,6],6:[50,8],7:[50,16],8:[25,4],9:[10,4]};
+      var _mig=_migMap[parseInt(saved.diversityMode,10)]||[100,0];
+      var _dp=$('#divPctSlider'); if(_dp)_dp.value=_mig[0];
+      var _sc=$('#shuffleCount'); if(_sc)_sc.value=_mig[1];
+    }
+    _updDivPctLbl();
 _updMgrDepthLbl();
   }catch(e){}
 })();
@@ -3229,7 +3284,8 @@ function resetAdvSettings(){
   const hnc=$('#helperNodeCapInput');if(hnc)hnc.value=3; // 3M
   const bm=$('#benchMode');if(bm)bm.value='vfast';     // Very Fast bench
   const md=$('#mgrDepth');if(md)md.value='0';_updMgrDepthLbl(); // manager depth 0% default
-  const dv=$('#diversityMode');if(dv)dv.value='0';    // diversity Off (pure divstatic)
+  const dp=$('#divPctSlider');if(dp)dp.value=100;_updDivPctLbl(); // 100% divstatic
+  const sc=$('#shuffleCount');if(sc)sc.value=0;        // 0 shuffle passes (diversity off)
   const ts=$('#targetScore');if(ts)ts.value='';        // target off
   if(typeof updateRatingCeilLabel==='function')updateRatingCeilLabel();
   saveAdvSettings();_solveCache=null;
@@ -3427,8 +3483,8 @@ function _runSolveInner(cap,ratingCeil,reuseSeed){
     _seed={seedBest:window._solveCtx.r.best,seedXIs:window._solveCtx.r.bestXIs};
   }
   else{_seed=(cap>2000000)?_probeFloor(form,sortedCards,ratingCeil):null;}
-  const _divMode=_diversityMode();
-  const r=solveWithDiversity(form,sortedCards,cap,ratingCeil,_seed?_seed.seedBest:undefined,_seed?_seed.seedXIs:undefined,_skipTies(),_divMode),ms=Math.round(performance.now()-t0);
+  const _divPlan=_diversityPlan();
+  const r=solveWithDiversity(form,sortedCards,cap,ratingCeil,_seed?_seed.seedBest:undefined,_seed?_seed.seedXIs:undefined,_skipTies(),_divPlan),ms=Math.round(performance.now()-t0);
   if(_skipTies()&&r&&r.bestXIs&&r.bestXIs.length>1)r.bestXIs=[r.bestXIs[0]]; // ties intentionally skipped -> show the one optimal lineup
   r.ubRating=maxPossibleRating(sortedCards,form); // search-independent upper bound on any legal squad's rating — drives the RC warning (see _rcCeilWarnHTML)
   _hideSolverOverlay();
@@ -4923,7 +4979,7 @@ function _pickPanelSuffixes(picks,holdGroups){
   const tieNote=(r.bestXIs.length>1
     ?'<div class="tiny">'+r.bestXIs.length+' squads tie at '+sc.total+'. Default frees the most managers for +2 \u2014 this one keeps <b>'+cleanMgrs+'</b> clean of '+MANAGER_DB.length+'.</div>'
     :'<div class="tiny">'+cleanMgrs+' of '+MANAGER_DB.length+' managers give a clean +2 on this XI.</div>')+_mgrDepth+sw;
-  const _divTxt=(r.diversity&&r.diversity.mode)?(' \u00b7 diversity: '+r.diversity.label+(r.diversity.provenComplete?' (completed \u2014 proven optimal)':'')):'';
+  const _divTxt=r.diversity?(' \u00b7 diversity: '+r.diversity.label+(r.diversity.provenComplete?' (completed \u2014 proven optimal)':'')):'';
   $('#solveOut').innerHTML=
   '<div class="summary"><div class="bigrow"><div class="tot">'+sc.total+'<small>PRE-MANAGER \u00b7 UP TO '+(sc.total+2)+' WITH MANAGER (+2)</small></div>'
     +'<div class="rc"><div><div class="b" style="color:var(--cyan)">'+sc.rating+'</div><div class="l">RATING</div></div>'
