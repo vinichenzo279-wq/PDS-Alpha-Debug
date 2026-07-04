@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v10.1</title>
+<title>Draft Solver v10.1.0.1</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -501,13 +501,28 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                resolves to 96 (value 21 instead of 11), so nothing changes for anyone who hasn't
                touched the slider. getRatingCeil()/updateRatingCeilLabel()/_applyAutoRC() all had
                their "+85"/"-85" base swapped for "+75"/"-75" \u2014 the only three places that ever
-               encoded the old floor. The low-RC probe-seed heuristic in _probeFloor() already
-               gates itself out below RC 86 by design (see its comments), so ceilings in the new
+               encoded the old floor. Also caught and fixed a fourth, easy-to-miss one:
+               _rcCeilWarnHTML()'s capped/sound branch suggested "lower RC to Math.max(85,ub)",
+               a leftover from when 85 was the slider's actual floor \u2014 for a legal ub in the
+               new 75\u201384 band it would recommend 85 instead of the true tighter value. Now
+               Math.max(75,ub). The low-RC probe-seed heuristic in _probeFloor() already gates
+               itself out below RC 86 by design (see its own comments), so ceilings in the new
                75\u201385 band simply skip that speed optimization and fall through to the
                unseeded main solve \u2014 correctness is unaffected, only probe seeding is skipped
-               at the new low end.
+               at the new low end. Re-verified maxPossibleRating() (UB-A/B/C/D/E combined) against
+               a brute-force oracle after this change: ~46,000 feasible-XI trials across general,
+               low-rating (down to single digits), heavy-hold-collision, barely-feasible, and
+               larger-formation pools, with extra weight on the new 72\u201392 boundary band \u2014
+               0 violations (oracle scores floored via futRating()'s own Math.floor, matching how
+               RC is actually compared against squad ratings everywhere else in the app).
+       v10.1.0.1 — Correction to v10.1: no logic change, version-string bump only. The
+               _rcCeilWarnHTML() fix (Math.max(85,ub) -> Math.max(75,ub)) landed in the same edit
+               as the v10.1 slider-range change but wasn't called out with its own version bump at
+               the time, so anyone who grabbed a copy before vs. after that fix was both holding
+               something labeled "v10.1" with no way to tell them apart from the string alone.
+               Per the 4th-number convention above, this makes the corrected copy distinguishable.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v10.1</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v10.1.0.1</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -3695,7 +3710,7 @@ function maxPossibleRating(pool,form){
   }
   // rc > ub : provably sound. Only worth a word if capped (nudge to lower RC instead of searching on).
   if(xiCapped){
-    const lower=Math.max(85,ub);
+    const lower=Math.max(75,ub); // slider floor, not the old 85 -- widened in v10.1
     return '<div class="note" style="border-color:var(--warn);margin-bottom:10px"><b>\u26a0 Rating Ceiling higher than needed</b> \u2014 no legal squad here can rate above '+ub+', below your RC of '+rc+'. Rather than search deeper at this RC, lower RC to '+lower+': it prunes harder and can finish faster, still guaranteed-optimal.</div>';
   }
   return ''; // rc > ub and the search completed uncapped: provably optimal, nothing to flag
