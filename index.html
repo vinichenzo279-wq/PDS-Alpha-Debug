@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v11.0</title>
+<title>Draft Solver v12.2.1</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -656,8 +656,127 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                tested that ever added value. Node-port fidelity was verified bit-for-bit against
                this file's solveBest first (15 drafts: identical best/nodes/capped, incl. a
                2,159,462-node case exact to the last node).
+       v11.1.0 — Bench Node Cap and Manager Node Cap exposed as their own fields in Advanced solver
+               settings (bench section and manager section respectively), both defaulting to 3M —
+               matching the _benchCap/_mgrCap values that were hardcoded before this, so behaviour
+               is unchanged unless a user opts in. Wired into every place those caps get set or
+               reset: fresh-solve start (_clearSolve), per-tie re-analysis (_reanalyzeTie's base +
+               its 'reset' branch, and _reanalyzeBenchBtn's threshold/label), and the standalone
+               "pick best manager" panel button. Persisted via the existing saveAdvSettings/
+               restoreAdvSettings/resetAdvSettings pattern, and added to the solve-start settings
+               snapshot (_recSnapshot/_recFmtSettings/_recNoteSettingsDrift) alongside the existing
+               node cap so the recreation log stays complete.
+               Also added a Helper Node Cap field, same section, same 3M default — replaces the
+               old fixed getHelperCap() (always 3000000) with getHelperNodeCap(), read by the
+               inline "check this pick" helper (solveContext) and its own deeper-search escalation
+               (runHelperDeep + its capped-result display), so the helper's default search budget
+               is user-configurable exactly like bench/manager's, instead of being the one mini-
+               solve left hardcoded.
+       v12.0 — "Search diversity" — new OPTIONAL, DEFAULT-OFF advanced setting. Solver core is
+               UNCHANGED (untouched since 9.5, and the divstatic ordering from 11.0 is intact):
+               this is a thin wrapper (solveWithDiversity) that, when a mode is selected, splits the
+               SAME node cap into phases — divstatic first (strong incumbent), then one or more
+               passes with each slot's candidate list FULLY SHUFFLED (a new deterministic
+               diversitySeed arg to solveBest picks shuffle vs divstatic ordering; nothing else in
+               solveBest changes). Each phase is seeded with the best score+lineups so far via the
+               existing seedBest/seedXIs params, so a later phase's pruning starts hot and can only
+               ADD to the result, never lose it; the wrapper keeps whichever phase scored highest
+               (tied lineups unioned). Result is therefore >= plain divstatic at the same budget by
+               construction, and any phase that finishes its whole tree still returns the proven
+               optimum. Five modes: Off (0, default — one plain divstatic call, zero overhead, so
+               anyone ignoring the setting is unaffected), Light (div 75% + 1 shuffle 25%), Balanced
+               (div 50% + 1 shuffle 50%), Multi (div 50% + 4 shuffles), Full random (1 shuffle 100%).
+               WHY IT EXISTS: shuffled ordering walks a completely different region of the tree, so
+               on hard CAPPED drafts it occasionally reaches a squad best-first never gets to in the
+               same budget. As a FORCED default it's worse (best-first does real work — pure-shuffle
+               lost to divstatic on ~65% of hard drafts, confirming the same lesson as the failed
+               backward/worst-first search), but as an OPTIONAL alternate it strictly BEAT pure
+               divstatic at equal budget on ~13% of hard realistic drafts (+1 to +3 pts), symmetric
+               high-variance. Because the wrapper keeps the max across phases and the user keeps only
+               the shown result, that variance is pure optional upside with no downside — the exact
+               profile of a good toggle and a bad default. METHODOLOGY: measured on a realistic
+               harness modelling the true 23-slot board (11 XI + 12 bench), holds of 1–5 sharing a
+               hold id exactly like syncSlot, bench eligible by pos — the correct model (an earlier
+               all-independent-cards harness overstated divstatic's margin; corrected, divstatic
+               still wins, just by less). Phase chaining validated against an iterative resumable
+               solver: 0 mismatches over 60 drafts, both uninterrupted and paused/resumed in 7,777-
+               node chunks, so a phased run returns exactly what each phase's uninterrupted run
+               would. Also re-confirmed here and REJECTED as before: pure-random and backward
+               (worst-first) orderings — both strictly worse than divstatic, kept only as selectable
+               curiosities (Full random is mode 4; it did win in rare cases, hence retained).
+               INTEGRATION: read via _diversityMode() next to _skipTies(); persisted/reset through
+               the existing saveAdvSettings/restoreAdvSettings/resetAdvSettings; added to the
+               recreation-log snapshot/format/drift; and the chosen mode + whether it completed is
+               printed on the solve summary line and thus in the downloadable .txt, so a reported
+               "beatable" solve records whether diversity was in play. (Also fixed a latent bug: the
+               v10.0 skip-ties restore read `d.skipTies` instead of `saved.skipTies`, so the toggle
+               never actually persisted across reloads — now corrected alongside the new setting.)
+       v12.0.1 — Bugfix: diversity modes (Light/Balanced/Multi/Full random) were showing NO tie
+               count or tie-navigation UI at all on solves where Off correctly showed dozens of tied
+               squads, even with Skip Ties confirmed OFF. Root cause was in solveWithDiversity's
+               phase-merge loop, not solveBest itself: the tie-union branch required `merged` to
+               already be truthy, but `merged` is only set inside the sibling "beats the incumbent"
+               branch or by a fallback that runs AFTER that check. The probe-floor pre-seed
+               (_probeFloor) sets `best` before phase 1 ever runs, so phase 1 very often only TIES
+               that seeded floor rather than beating it — meaning the union branch fired with
+               `merged` still null on exactly the phase that finds the most ties (phase 1 gets the
+               largest slice of the budget), and those lineups were silently dropped before ever
+               reaching bestXIs. Off mode never showed this because it bypasses the phase loop
+               entirely and returns solveBest's own single continuous bestXIs untouched. Fix: drop
+               the `&& merged` condition — reaching that branch with r.best===best and best>=0
+               already guarantees bestXIs is valid to union into (best===-1 with nothing found is a
+               harmless empty no-op either way). Solver core, UB, and pruning untouched; this is a
+               one-line change scoped entirely to the diversity wrapper's bookkeeping.
+       v12.1.0 — Added 5 new EXPERIMENTAL diversity modes for restart/portfolio testing (per verdict
+               audit): Multi6/Multi8/Multi16 (modes 5-7) keep the proven 50% divstatic / 50% shuffle
+               split but divide the shuffle half into 6, 8, or 16 passes instead of 4, to look for the
+               point where more independent short passes stop paying off vs. one pass with real
+               budget (per-pass budget too small to reach a meaningfully different subtree). Aggr25 /
+               Aggr10 (modes 8-9) instead shrink divstatic's OWN share to 25% or 10% and hand the
+               freed budget to 4 shuffle passes, on the theory that divstatic converges to a strong
+               incumbent early (most of its budget goes to proving optimality, not finding a better
+               squad) so giving it less should be close to free upside. All five reuse
+               solveWithDiversity's existing phase loop/seeding/merge logic completely unchanged --
+               only the plan's fractions differ -- so they inherit the same >= plain-divstatic
+               guarantee and the same early-exit-on-proven-optimum behavior as modes 1-4. Added a
+               mkPlan(divFrac,nShuffles) helper so each plan's fractions are generated (not
+               hand-typed) and therefore guaranteed to sum to 1. Extended the diversityMode select
+               (5 new options) and the _diversityMode() clamp (was v>4, now v>9); no other
+               integration points needed changes since settings persistence/reset/recreation-log all
+               read the select value generically. These modes are unvalidated -- kept as selectable
+               options for A/B testing against Multi/Balanced on real hard drafts, not yet claimed to
+               be better in general.
+       v12.1.1 — UI tweak only, no logic changes. Search diversity tooltip: dropped the
+               "experimental / not yet proven better" framing now that the five new modes have
+               had time to bake; kept the mechanics (what each mode splits and why). Reordered
+               the diversityMode select so Full random (mode 4, rarely the best pick) sits last
+               instead of between Multi and Multi6 -- values/behavior unchanged, display order
+               only.
+       v12.2.0 — LOGIC CHANGE: "Full random" (mode 4) used to spend its entire budget on ONE
+               reshuffle -- a single fixed random order, then one long (possibly capped)
+               backtracking dive through that one tree. That's one deep walk down one random path,
+               not many independent shots at getting lucky, so its odds of landing near-optimal
+               fast were lower than the name suggested. Changed to FULL_RANDOM_PASSES (32)
+               independent reshuffles, each getting 1/32 of the same total budget via the existing
+               mkPlan(0,N) helper (zero divstatic share, same as before -- still purely random,
+               no best-first influence). Rationale: a complete valid squad can in principle be
+               hit in very few nodes if that pass's random order happens to line up well, so more
+               independent draws (more distinct random orders tried) beats one order given more
+               room to wander, for the same reasons Multi6/8/16 beat Multi at their own budget
+               split. Same wrapper guarantees apply unchanged (result >= seed, any completed pass
+               is the proven optimum, ties unioned). Purely a DIVERSITY_MODES[4] plan change plus
+               the new FULL_RANDOM_PASSES constant -- solveBest, solveWithDiversity's phase loop,
+               and every other mode are untouched. 32 is a starting point, not a measured optimum
+               (unlike modes 1-3's numbers); worth revisiting if real-draft results suggest a
+               different pass count works better.
+       v12.2.1 — UI tweak only, no logic changes. Bench analysis depth tooltip referenced
+               "the Rating Ceiling above" as the XI lever, but RC no longer sits directly above
+               this control -- reworded to just state the bench-only/never-changes-XI fact
+               without positional reference. Also added the missing description paragraph under
+               Solver Node Cap (millions) -- it was the only node-cap field of the four (Solver /
+               Helper / Bench / Manager) without one, now consistent with the others' style.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v11.0</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v12.2.1</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -806,11 +925,33 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
       <div style="margin-top:14px">
         <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Solver Node Cap (millions)</label>
         <input type="number" id="nodeCapInput" min="1" value="5" inputmode="numeric" style="width:100%" onblur="clampNodeCap(this);saveAdvSettings()">
+        <p class="tiny" style="margin:4px 0 0">Search budget for the main starting-XI solve, before it reports a capped result and offers a deeper search (x3 escalation). Default 5M.</p>
+      </div>
+      <div style="margin-top:14px">
+        <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Helper Node Cap (millions)</label>
+        <input type="number" id="helperNodeCapInput" min="1" value="3" inputmode="numeric" style="width:100%" onblur="clampNodeCap(this);saveAdvSettings()">
+        <p class="tiny" style="margin:4px 0 0">Search budget for the inline pick helper (the &ldquo;check this pick&rdquo; button while drafting), before it reports a capped result and offers a deeper search. Default 3M.</p>
       </div>
       <div style="margin-top:14px">
         <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Target score (optional)</label>
         <input type="number" id="targetScore" min="0" placeholder="0 = off" inputmode="numeric" style="width:100%">
         <p class="tiny" style="margin:4px 0 0">Only search for squads reaching this final score (incl. manager +2). 0 = off.</p>
+      </div>
+      <div style="margin-top:14px">
+        <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Search diversity</label>
+        <select id="diversityMode" style="width:100%" onchange="saveAdvSettings();_solveCache=null;">
+          <option value="0" selected>Off &mdash; pure divstatic (default, fastest)</option>
+          <option value="1">Light &mdash; divstatic 75% + 1 random pass 25%</option>
+          <option value="2">Balanced &mdash; divstatic 50% + 1 random pass 50%</option>
+          <option value="3">Multi &mdash; divstatic 50% + 4 random passes</option>
+          <option value="5">Multi6 &mdash; divstatic 50% + 6 random passes</option>
+          <option value="6">Multi8 &mdash; divstatic 50% + 8 random passes</option>
+          <option value="7">Multi16 &mdash; divstatic 50% + 16 random passes</option>
+          <option value="8">Aggr25 &mdash; divstatic 25% + 4 random passes</option>
+          <option value="9">Aggr10 &mdash; divstatic 10% + 4 random passes</option>
+          <option value="4">Full random &mdash; 32 independent random passes (best of many)</option>
+        </select>
+        <p class="tiny" style="margin:4px 0 0">Splits the <b>same</b> node cap into phases: divstatic first (strong incumbent), then one or more <b>randomly-ordered</b> passes that explore different regions of the tree, keeping whichever pass scored highest. Purely optional upside &mdash; the result is never worse than Off at the same budget. On hard, capped drafts a diversity pass beat pure divstatic on ~13% of tests (+1 to +3), so it&rsquo;s worth a try when a solve caps out and you suspect a better squad; leave <b>Off</b> for normal use. Any pass that finishes the whole tree still returns the proven optimum. <b>Full random</b> skips divstatic entirely and splits the whole budget into 32 independent reshuffles instead of one long one &mdash; more independent rolls of the dice rather than one deep walk down a single random order, so it's the pick most likely to get lucky fast on a huge board. <b>Multi6/8/16</b> keep divstatic's 50% share but split the remaining half into more, smaller shuffle passes &mdash; more independent short tries vs. one long one. <b>Aggr25/Aggr10</b> instead shrink divstatic's own share (to 25% or 10%) and give the freed budget to 4 shuffle passes, on the theory that divstatic converges on a strong incumbent early and most of its remaining budget goes to proving optimality rather than finding a better squad.</p>
       </div>
       <div style="margin-top:14px">
         <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Bench analysis depth</label>
@@ -821,10 +962,20 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           <option value="medium">Slow &mdash; ordered holds, complementarity-aware</option>
           <option value="slow">Very Slow &mdash; fully exhaustive (not recommended)</option>
         </select>
-        <p class="tiny" style="margin:4px 0 0">Controls only how hard the <b>bench picks</b> are searched &mdash; it never changes your starting XI (the <b>Rating Ceiling</b> above is the XI lever). Higher tiers add confidence, rarely a different answer. <b>Very Slow</b> can be extremely slow on complex drafts for little benefit.</p>
+        <p class="tiny" style="margin:4px 0 0">Controls only how hard the <b>bench picks</b> are searched &mdash; it never changes your starting XI. Higher tiers add confidence, rarely a different answer. <b>Very Slow</b> can be extremely slow on complex drafts for little benefit.</p>
+        <div style="margin-top:10px">
+          <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Bench Node Cap (millions)</label>
+          <input type="number" id="benchNodeCapInput" min="1" value="3" inputmode="numeric" style="width:100%" onblur="clampNodeCap(this);saveAdvSettings()">
+          <p class="tiny" style="margin:4px 0 0">Per-tie search budget for bench picks, before the solver reports a capped result and offers to keep searching. Default 3M.</p>
+        </div>
         <label class="tiny" style="display:block;margin-top:10px">Manager depth &mdash; ties given true +2/+1 analysis: <b id="mgrDepthLbl">0%</b></label>
         <input type="range" id="mgrDepth" min="0" max="1" step="0.05" value="0" style="width:100%" oninput="_updMgrDepthLbl()" onchange="saveAdvSettings();_solveCache=null;">
         <p class="tiny" style="margin:4px 0 0">0 = no tie analysis, 1 = check all ties; in between scales how many are checked.</p>
+        <div style="margin-top:10px">
+          <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Manager Node Cap (millions)</label>
+          <input type="number" id="mgrNodeCapInput" min="1" value="3" inputmode="numeric" style="width:100%" onblur="clampNodeCap(this);saveAdvSettings()">
+          <p class="tiny" style="margin:4px 0 0">Per-tie search budget for manager (+2/+1) analysis, before the solver reports a capped result and offers to keep searching. Default 3M.</p>
+        </div>
       </div>
       <button class="btn gho sm" style="margin-top:14px" onclick="resetAdvSettings()">&#8635; Reset solver settings to defaults</button>
 
@@ -1350,7 +1501,7 @@ const GOLD_DB=[
 let cards=[],managers=[],helpCards=[],chosenForm=null,uid=1,lastSolve=null,playerDB=[];
 let editingHelpIdx=null; // null = adding new; number = editing existing helpCard index
 let board=null,activeSlot=null,editingId=null,editingMgrIdx=null,_formChanged=false;
-let _benchCap=3000000,_mgrCap=3000000; // bench / manager-awareness mini-solve caps (should never actually bind) // 23-slot board model (Phase 2)
+let _benchCap=3000000,_mgrCap=3000000; // bench / manager-awareness mini-solve caps (should never actually bind); this initial value is only a placeholder — _clearSolve() re-derives the real value from Advanced solver settings (getBenchNodeCap/getMgrNodeCap) before every actual solve. Can't call those getters here directly: they use the $ helper, which is declared with const further down the script and is still in its temporal dead zone at this point — calling it here throws and kills the rest of the script. // 23-slot board model (Phase 2)
 let _swapMode=false,_swapPick=[]; // slot-swap state
 let _compareMode=false,_compareList=[]; // formation compare mode
 let _judgeExclude=null,_forceSquad=false; // inline helper: exclude the slot being judged, force squad-awareness
@@ -1395,7 +1546,7 @@ document.querySelectorAll('.tabbar button').forEach(b=>b.onclick=()=>{
   b.classList.add('on');document.getElementById(b.dataset.v).classList.add('on');
 });
 function _goView(v){const b=document.querySelector('.tabbar button[data-v="'+v+'"]');if(b)b.click();}
-function _clearSolve(){lastSolve=null;window._solved=null;window._solveCtx=null;window._bench=null;_benchCap=3000000;_mgrCap=3000000;const a=$('#solveOut');if(a)a.innerHTML='';const b=$('#mgrOut');if(b)b.innerHTML='';}
+function _clearSolve(){lastSolve=null;window._solved=null;window._solveCtx=null;window._bench=null;_benchCap=getBenchNodeCap();_mgrCap=getMgrNodeCap();const a=$('#solveOut');if(a)a.innerHTML='';const b=$('#mgrOut');if(b)b.innerHTML='';}
 /* ==== Solve recreation log ====
    Records, per solve session, everything needed to re-run the EXACT conditions that produced the
    result in the log: (a) a snapshot of every solver-relevant setting at the moment the fresh solve
@@ -1410,18 +1561,21 @@ function _clearSolve(){lastSolve=null;window._solved=null;window._solveCtx=null;
    Stamped into lastSolve (settings/steps) at applyTie/emergency time, so it persists through
    save/export/restore with everything else and refreshLog can print it. */
 let _recActions=[],_recBase=null,_recCurSettings=null;
-function _recSnapshot(){return {rc:getRatingCeil(),capM:Math.round(getNodeCap()/1000000),target:_targetScore()||0,bench:_benchMode(),mgrDepth:_mgrFrac(),skipTies:_skipTies()};}
-function _recFmtSettings(s){return 'RC '+s.rc+' \u00b7 node cap '+s.capM+'M \u00b7 target '+(s.target?s.target:'off')+' \u00b7 bench speed '+s.bench+' \u00b7 mgr depth '+(typeof s.mgrDepth==='number'?s.mgrDepth.toFixed(2):s.mgrDepth)+' \u00b7 skip ties '+(s.skipTies?'on':'off');}
+function _recSnapshot(){return {rc:getRatingCeil(),capM:Math.round(getNodeCap()/1000000),benchCapM:Math.round(getBenchNodeCap()/1000000),mgrCapM:Math.round(getMgrNodeCap()/1000000),target:_targetScore()||0,bench:_benchMode(),mgrDepth:_mgrFrac(),skipTies:_skipTies(),diversity:_diversityMode()};}
+function _recFmtSettings(s){return 'RC '+s.rc+' \u00b7 node cap '+s.capM+'M \u00b7 bench cap '+s.benchCapM+'M \u00b7 mgr cap '+s.mgrCapM+'M \u00b7 target '+(s.target?s.target:'off')+' \u00b7 bench speed '+s.bench+' \u00b7 mgr depth '+(typeof s.mgrDepth==='number'?s.mgrDepth.toFixed(2):s.mgrDepth)+' \u00b7 skip ties '+(s.skipTies?'on':'off')+' \u00b7 diversity '+((s.diversity|0)||'off');}
 function _recNoteSettingsDrift(){
   const cur=_recSnapshot();
   if(_recCurSettings){
     const p=_recCurSettings,d=[];
     if(cur.rc!==p.rc)d.push('RC '+p.rc+'\u2192'+cur.rc);
     if(cur.capM!==p.capM)d.push('node cap '+p.capM+'M\u2192'+cur.capM+'M');
+    if(cur.benchCapM!==p.benchCapM)d.push('bench cap '+p.benchCapM+'M\u2192'+cur.benchCapM+'M');
+    if(cur.mgrCapM!==p.mgrCapM)d.push('mgr cap '+p.mgrCapM+'M\u2192'+cur.mgrCapM+'M');
     if(cur.target!==p.target)d.push('target '+(p.target||'off')+'\u2192'+(cur.target||'off'));
     if(cur.bench!==p.bench)d.push('bench speed '+p.bench+'\u2192'+cur.bench);
     if(cur.mgrDepth!==p.mgrDepth)d.push('mgr depth '+p.mgrDepth.toFixed(2)+'\u2192'+cur.mgrDepth.toFixed(2));
     if(cur.skipTies!==p.skipTies)d.push('skip ties '+(p.skipTies?'on':'off')+'\u2192'+(cur.skipTies?'on':'off'));
+    if(cur.diversity!==p.diversity)d.push('diversity '+((p.diversity|0)||'off')+'\u2192'+((cur.diversity|0)||'off'));
     if(d.length)_recActions.push('settings changed: '+d.join(', '));
   }
   _recCurSettings=cur;
@@ -2384,7 +2538,7 @@ function scoreXI(xi){
 }
 
 /* ============================ SOLVER (DFS + bound) ============================ */
-function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies){
+function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diversitySeed){
   const ST=!!skipTies; // "Skip ties": prune branches that can only TIE the best (strict-improvement B&B) and stop collecting tied XIs. Provably keeps the optimal SCORE (never prunes a strictly-better branch, whose admissible bound must exceed best); only tied lineups are dropped.
   const RC=ratingCeil!==undefined?ratingCeil:99;
   const slots=form.slots;
@@ -2408,8 +2562,29 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies){
   // rarity alone, icon-first/normal-first type priority) — zero effect on total nodes in 120
   // broad trials each, and the only hard-trial divergence had club/league/icon-first variants
   // LOSING a point; the nation+club BLEND is the only ordering found to add anything.
+  //
+  // v12.0 DIVERSITY: when `diversitySeed` is a number, each slot's candidate list is instead
+  // FULLY SHUFFLED (deterministically, from that seed) rather than divstatic-ordered. This throws
+  // away best-first on purpose so the search walks a completely different region of the tree — used
+  // only by the optional, default-off "search diversity" wrapper (solveWithDiversity below), which
+  // spends part of the node budget on divstatic first (best incumbent) and the rest on one or more
+  // seeded-shuffle passes, keeping whichever pass scored highest. As a FORCED default this is worse
+  // (best-first ordering does real work — pure-shuffle lost to divstatic on ~65% of hard drafts),
+  // but as an OPTIONAL alternate it strictly beat pure divstatic at equal budget on ~13% of hard
+  // realistic drafts (+1 to +3 pts), symmetric high-variance — so it only ever helps here because
+  // the wrapper keeps the max across passes, never the shuffle alone. Ordering-only, exactly like
+  // the divstatic path: pruning/UB/traversal untouched, so a run that COMPLETES still returns the
+  // true optimum regardless of seed. See the v12.0 CHANGELOG entry for the full experiment.
+  const _divShuffle=(typeof diversitySeed==='number');
+  let _dseed=(diversitySeed|0)||1;
+  const _drand=()=>{_dseed|=0;_dseed=(_dseed+0x6D2B79F5)|0;let t=Math.imul(_dseed^(_dseed>>>15),1|_dseed);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};
   const cand=slots.map(s=>{
     const list=cards.filter(c=>c.pos.includes(s));
+    if(_divShuffle){ // deterministic Fisher–Yates from the per-call seed (advances _dseed across slots)
+      const a=list.slice();
+      for(let i=a.length-1;i>0;i--){const j=Math.floor(_drand()*(i+1));const tmp=a[i];a[i]=a[j];a[j]=tmp;}
+      return a;
+    }
     const natCount={},clubCount={};
     for(const c of list){
       natCount[c.nation]=(natCount[c.nation]||0)+1;
@@ -2572,6 +2747,105 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies){
   }
   dfs(0);
   return {best,bestXIs,nodes,capped,slots,maxRating,rcUsed:RC};
+}
+
+// v12.0 — optional "search diversity" wrapper around solveBest. DEFAULT OFF: mode 0 (or falsy)
+// runs plain divstatic exactly as before, one call, zero overhead — so nobody who leaves the
+// setting alone is affected in any way. When a diversity mode is chosen, the SAME total node
+// budget `cap` is split into phases: phase 1 is always divstatic (best-first, establishes a strong
+// incumbent), and the remaining phases are seeded-shuffle passes (see solveBest's diversitySeed)
+// that walk different regions of the tree. Every phase is seeded with the best score+lineups found
+// so far (solveBest's seedBest/seedXIs), so a later phase's pruning starts hot and it can only ADD
+// lineups/score, never lose the incumbent. We keep whichever phase scored highest (ties merged), so
+// the high variance of shuffling is pure upside — the wrapper's result is >= plain divstatic by
+// construction on the same budget, and equals it whenever the shuffles don't find anything better.
+// If ANY phase completes its whole tree (not capped), that result is the proven optimum and we stop
+// early. Phase plans below are exactly the ones measured (see CHANGELOG): fractions of the budget.
+// helper: build a {divstatic frac} + N even shuffle passes plan, e.g. mkPlan(.5,4) ==
+// mode 3's plan (50% divstatic + 4x12.5% shuffles). Used for the multi6/8/16 and aggrNN_4
+// variants below so the fraction math can't drift out of sync with the label.
+function mkPlan(divFrac,nShuffles){
+  const plan=divFrac>0?[{shuffle:false,frac:divFrac}]:[];
+  const each=(1-divFrac)/nShuffles;
+  for(let i=0;i<nShuffles;i++)plan.push({shuffle:true,frac:each});
+  return plan;
+}
+// v12.2 — how many independent reshuffles "Full random" splits its budget across (was 1). See
+// DIVERSITY_MODES[4] comment below for the reasoning.
+const FULL_RANDOM_PASSES=32;
+const DIVERSITY_MODES={
+  0:{label:'Off (pure divstatic)',plan:null},
+  1:{label:'Light (divstatic 75% + 1 shuffle 25%)',plan:[{shuffle:false,frac:.75},{shuffle:true,frac:.25}]},
+  2:{label:'Balanced (divstatic 50% + 1 shuffle 50%)',plan:[{shuffle:false,frac:.5},{shuffle:true,frac:.5}]},
+  3:{label:'Multi (divstatic 50% + 4 shuffles 12.5% each)',plan:mkPlan(.5,4)},
+  // v12.2 — Full random was a single shuffle pass burning the WHOLE budget on one fixed random
+  // order: one reshuffle, then an exhaustive/capped dive through that one tree. That's one long
+  // walk, not many chances to get lucky. Split into FULL_RANDOM_PASSES (32) independent reshuffles
+  // instead — each gets 1/32 of the budget and its own fresh seed, so a squad can be hit by any
+  // one of 32 independent random orders rather than needing the single chosen order to wander into
+  // it. Same total budget, same zero-divstatic-influence "pure random" spirit, more independent
+  // draws instead of one deep one.
+  4:{label:`Full random (${FULL_RANDOM_PASSES} shuffles, ~${(100/FULL_RANDOM_PASSES).toFixed(1)}% each)`,plan:mkPlan(0,FULL_RANDOM_PASSES)},
+  // v12.1 — restart/portfolio test plan (see CHANGELOG): same 50/50 split as mode 3 but with
+  // more, smaller shuffle passes, to look for the point where more independent draws stops
+  // paying off (per-pass budget too small to reach a meaningfully different subtree).
+  5:{label:'Multi6 (divstatic 50% + 6 shuffles ~8.3% each)',plan:mkPlan(.5,6)},
+  6:{label:'Multi8 (divstatic 50% + 8 shuffles 6.25% each)',plan:mkPlan(.5,8)},
+  7:{label:'Multi16 (divstatic 50% + 16 shuffles 3.125% each)',plan:mkPlan(.5,16)},
+  // "give divstatic less" variants: divstatic converges to a strong incumbent early (most nodes
+  // go to PROVING optimality, not finding it), so shrinking its slice and handing the freed
+  // budget to more shuffle passes should be close to free upside if divstatic still lands a
+  // strong-enough incumbent well within its smaller share.
+  8:{label:'Aggr25 (divstatic 25% + 4 shuffles 18.75% each)',plan:mkPlan(.25,4)},
+  9:{label:'Aggr10 (divstatic 10% + 4 shuffles 22.5% each)',plan:mkPlan(.10,4)}
+};
+function solveWithDiversity(form,cards,cap,ratingCeil,seedBest,seedXIs,skipTies,divMode){
+  const mode=DIVERSITY_MODES[divMode|0];
+  if(!mode||!mode.plan){ // OFF (or unknown) -> untouched single divstatic solve
+    return solveBest(form,cards,cap,ratingCeil,seedBest,seedXIs,skipTies);
+  }
+  // deterministic per-draft base seed so repeated solves of the same board are reproducible
+  let baseSeed=(cards.length*2654435761)>>>0;
+  for(let i=0;i<cards.length;i++)baseSeed=(baseSeed^(((cards[i].rating|0)+1)*(i+1)*2246822519))>>>0;
+  let best=(seedBest!==undefined?seedBest:-1),bestXIs=(seedXIs?seedXIs.slice():[]);
+  let totalNodes=0,anyCapped=false,merged=null,shufIdx=0;
+  const phaseLog=[];
+  for(let p=0;p<mode.plan.length;p++){
+    const ph=mode.plan[p];
+    const budget=Math.max(1,Math.round(cap*ph.frac));
+    const divSeed=ph.shuffle?((baseSeed+ (0x9E3779B1*(++shufIdx)))>>>0):undefined;
+    const r=solveBest(form,cards,budget,ratingCeil,
+                      best>=0?best:undefined, bestXIs.length?bestXIs:undefined,
+                      skipTies, divSeed);
+    if(r.error)return r; // slot-with-no-card etc. — surface immediately, same as a plain solve
+    totalNodes+=r.nodes;
+    phaseLog.push({phase:p+1,kind:ph.shuffle?'shuffle':'divstatic',budget,nodes:r.nodes,best:r.best,capped:r.capped});
+    if(r.best>best){ best=r.best; bestXIs=r.bestXIs.slice(); merged=r; }
+    else if(r.best===best){
+      // v12.0.1 FIX: this branch used to require `merged` to already be truthy. But `merged` is
+      // only ever set here (the sibling if-branch above) or by the fallback a few lines down --
+      // which runs AFTER this check on the very phase that needs it. Concretely: the probe-floor
+      // pre-seed (_probeFloor) sets `best` BEFORE phase 1 ever runs. Phase 1 then very often
+      // MATCHES that seed (r.best===best) rather than beating it, since the seed is itself a
+      // proven-reachable floor -- so this branch fired with merged still null, and phase 1's own
+      // newly-found tied lineups (usually the largest batch, since phase 1 gets the biggest slice
+      // of the budget) were silently dropped, never entering `bestXIs` at all. Off mode never hit
+      // this because it bypasses solveWithDiversity's phase loop entirely and returns solveBest's
+      // own single continuous bestXIs. The `merged` check added nothing real: reaching this branch
+      // with r.best===best and best>=0 already guarantees bestXIs is a valid array to union into
+      // (best===-1 with nothing found yields an empty, harmless no-op union either way).
+      // same score: union any NEW tied lineups this phase found (dedupe by id-set key)
+      const keys=new Set(bestXIs.map(x=>x.key||(x.key=x.xi.map(c=>c.id).sort().join(','))));
+      r.bestXIs.forEach(x=>{const k=x.key||(x.key=x.xi.map(c=>c.id).sort().join(','));if(!keys.has(k)){keys.add(k);bestXIs.push(x);}});
+    }
+    if(merged===null&&r.best>=0){merged=r;} // first phase that achieved a real score anchors the result object
+    if(!r.capped){ anyCapped=false; // a phase finished its whole tree -> proven optimum for the draft, stop
+      return Object.assign({},merged,{best,bestXIs,nodes:totalNodes,capped:false,rcUsed:merged.rcUsed,maxRating:merged.maxRating,slots:merged.slots,diversity:{mode:divMode,label:mode.label,phases:phaseLog,provenComplete:true}});
+    }
+    anyCapped=true;
+  }
+  if(!merged)return solveBest(form,cards,cap,ratingCeil,seedBest,seedXIs,skipTies); // no phase scored (all infeasible) — fall back
+  return Object.assign({},merged,{best,bestXIs,nodes:totalNodes,capped:anyCapped,diversity:{mode:divMode,label:mode.label,phases:phaseLog,provenComplete:false}});
 }
 
 function greedyPartial(form){
@@ -2856,6 +3130,7 @@ function _hideSolverOverlay(){
 // slider, with the warnings back. Default-on is expressed as "missing or checked" so older saved
 // states (no checkbox key) also default to auto.
 function _skipTies(){const cb=$('#skipTies');return !!(cb&&cb.checked);} // default OFF
+function _diversityMode(){const el=$('#diversityMode');const v=el?parseInt(el.value,10):0;return(isNaN(v)||v<0||v>9)?0:v;} // default 0 = OFF (pure divstatic); v12.1 adds modes 5-9 (multi6/8/16, aggr25, aggr10)
 function _autoRCon(){const cb=$('#rcAutoOptimal');return !cb||cb.checked;}
 function _applyAutoRC(){
   if(!_autoRCon())return null;
@@ -2896,7 +3171,16 @@ function updateRatingCeilLabel(){
 // We cap display at a readable max; values above ~2B are ludicrously large so we cap slider at index 8.
 function clampNodeCap(el){let v=parseInt(el.value,10);if(isNaN(v)||v<1)el.value=1;}
 function getNodeCap(){const el=$('#nodeCapInput');if(!el)return 10000000;const v=parseInt(el.value,10);return(isNaN(v)||v<1)?10000000:v*1000000;}
-function getHelperCap(){return 3000000;}
+// Helper mini-solve cap (inline "check this pick" judge + its own deeper-search escalation),
+// exposed in Advanced solver settings (Helper Node Cap field). Same fallback pattern as
+// getNodeCap()/getBenchNodeCap(): missing/invalid input -> 3M, matching the hardcoded default
+// this replaces, so existing behaviour is unchanged unless the user opts in.
+function getHelperNodeCap(){const el=$('#helperNodeCapInput');if(!el)return 3000000;const v=parseInt(el.value,10);return(isNaN(v)||v<1)?3000000:v*1000000;}
+// Bench / manager mini-solve caps, exposed in Advanced solver settings (Bench/Manager Node Cap
+// fields). Same fallback pattern as getNodeCap(): missing/invalid input -> 3M, matching the
+// hardcoded default this replaces, so existing behaviour is unchanged unless the user opts in.
+function getBenchNodeCap(){const el=$('#benchNodeCapInput');if(!el)return 3000000;const v=parseInt(el.value,10);return(isNaN(v)||v<1)?3000000:v*1000000;}
+function getMgrNodeCap(){const el=$('#mgrNodeCapInput');if(!el)return 3000000;const v=parseInt(el.value,10);return(isNaN(v)||v<1)?3000000:v*1000000;}
 // Advanced solver settings persistence (rating ceiling + node cap). Same pattern as saveHW/restoreHW:
 // save on every change, restore on load. Unlike HW these two live directly as hardcoded <input> values
 // in the markup rather than a JS object rendered into the DOM, so restore sets .value on the elements
@@ -2906,7 +3190,8 @@ function saveAdvSettings(){
   try{
     const rc=$('#ratingCeilSlider'),nc=$('#nodeCapInput'),bm=$('#benchMode'),md=$('#mgrDepth');
     const ar=$('#rcAutoOptimal');
-    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true, skipTies:(($('#skipTies')||{}).checked||false)};
+    const bnc=$('#benchNodeCapInput'),mnc=$('#mgrNodeCapInput'),hnc=$('#helperNodeCapInput');
+    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true, skipTies:(($('#skipTies')||{}).checked||false),diversityMode:(($('#diversityMode')||{}).value||'0'),benchNodeCap:bnc?bnc.value:undefined,mgrNodeCap:mnc?mnc.value:undefined,helperNodeCap:hnc?hnc.value:undefined};
     localStorage.setItem(_ADV_SAVE_KEY,JSON.stringify(d));
   }catch(e){}
 }
@@ -2919,6 +3204,9 @@ function saveAdvSettings(){
     // sync the label/warning text without an extra call.
     if(saved.ratingCeil!==undefined){const rc=$('#ratingCeilSlider');if(rc)rc.value=saved.ratingCeil;}
     if(saved.nodeCap!==undefined){const nc=$('#nodeCapInput');if(nc)nc.value=saved.nodeCap;}
+    if(saved.benchNodeCap!==undefined){const bnc=$('#benchNodeCapInput');if(bnc)bnc.value=saved.benchNodeCap;}
+    if(saved.mgrNodeCap!==undefined){const mnc=$('#mgrNodeCapInput');if(mnc)mnc.value=saved.mgrNodeCap;}
+    if(saved.helperNodeCap!==undefined){const hnc=$('#helperNodeCapInput');if(hnc)hnc.value=saved.helperNodeCap;}
     if(saved.benchMode!==undefined){const bm=$('#benchMode');if(bm)bm.value=saved.benchMode;}
     if(saved.mgrDepth!==undefined){const md=$('#mgrDepth');if(md)md.value=saved.mgrDepth;}
     else if(saved.speedMode!==undefined){ // migrate the old combined tier to the two new controls
@@ -2928,15 +3216,20 @@ function saveAdvSettings(){
     }
     if(saved.rcAuto!==undefined){const ar=$('#rcAutoOptimal');if(ar)ar.checked=!!saved.rcAuto;}
     
-    if(d.skipTies!==undefined){var _st=$('#skipTies'); if(_st)_st.checked=!!d.skipTies;}
+    if(saved.skipTies!==undefined){var _st=$('#skipTies'); if(_st)_st.checked=!!saved.skipTies;}
+    if(saved.diversityMode!==undefined){var _dv=$('#diversityMode'); if(_dv)_dv.value=String(saved.diversityMode);}
 _updMgrDepthLbl();
   }catch(e){}
 })();
 function resetAdvSettings(){
   const rc=$('#ratingCeilSlider');if(rc)rc.value=21;   // 96
   const nc=$('#nodeCapInput');if(nc)nc.value=5;        // 5M
+  const bnc=$('#benchNodeCapInput');if(bnc)bnc.value=3; // 3M
+  const mnc=$('#mgrNodeCapInput');if(mnc)mnc.value=3;   // 3M
+  const hnc=$('#helperNodeCapInput');if(hnc)hnc.value=3; // 3M
   const bm=$('#benchMode');if(bm)bm.value='vfast';     // Very Fast bench
   const md=$('#mgrDepth');if(md)md.value='0';_updMgrDepthLbl(); // manager depth 0% default
+  const dv=$('#diversityMode');if(dv)dv.value='0';    // diversity Off (pure divstatic)
   const ts=$('#targetScore');if(ts)ts.value='';        // target off
   if(typeof updateRatingCeilLabel==='function')updateRatingCeilLabel();
   saveAdvSettings();_solveCache=null;
@@ -3134,7 +3427,8 @@ function _runSolveInner(cap,ratingCeil,reuseSeed){
     _seed={seedBest:window._solveCtx.r.best,seedXIs:window._solveCtx.r.bestXIs};
   }
   else{_seed=(cap>2000000)?_probeFloor(form,sortedCards,ratingCeil):null;}
-  const r=solveBest(form,sortedCards,cap,ratingCeil,_seed?_seed.seedBest:undefined,_seed?_seed.seedXIs:undefined,_skipTies()),ms=Math.round(performance.now()-t0);
+  const _divMode=_diversityMode();
+  const r=solveWithDiversity(form,sortedCards,cap,ratingCeil,_seed?_seed.seedBest:undefined,_seed?_seed.seedXIs:undefined,_skipTies(),_divMode),ms=Math.round(performance.now()-t0);
   if(_skipTies()&&r&&r.bestXIs&&r.bestXIs.length>1)r.bestXIs=[r.bestXIs[0]]; // ties intentionally skipped -> show the one optimal lineup
   r.ubRating=maxPossibleRating(sortedCards,form); // search-independent upper bound on any legal squad's rating — drives the RC warning (see _rcCeilWarnHTML)
   _hideSolverOverlay();
@@ -3296,8 +3590,7 @@ function _reanalyze(which,cap){
 }
 // Re-analyse ONLY the currently-viewed tie's bench (and its manager depth), e.g. for a tie the
 // auto-pass skipped, or just to double-check one XI.
-// This has its OWN cap pair, kept per-tie on ctx.tieCaps[idx]={bench,mgr}, starting at the same 3M
-// base as everything else. It is NOT the same object as the shared _benchCap/_mgrCap that govern the
+// This has its OWN cap pair, kept per-tie on ctx.tieCaps[idx]={bench,mgr}, starting at the same bench/manager node-cap base as everything else (Advanced solver settings, default 3M). It is NOT the same object as the shared _benchCap/_mgrCap that govern the
 // aggregate "Bench" / "Managers" panel searches — those keep whatever the user escalated them to via
 // their own "keep searching" buttons, untouched by anything that happens here. That shared pair is
 // swapped in only for the duration of computeBenchPicks/analyzeManagerDepth (which read it as a
@@ -3305,16 +3598,16 @@ function _reanalyze(which,cap){
 // far past the bench/manager options as it needs to without ever permanently overwriting them, and
 // without needing to go through the bench/manager options first.
 // escalate: undefined/falsy = normal run at whatever this tie's own cap already is (the ghost button
-//             uses this after 'reset' has just put it back at the 3M base).
+//             uses this after 'reset' has just put it back at the configured base).
 //           true    = 3x whichever of this tie's own bench/mgr caps actually capped last time.
 //           'forever' = jump both of this tie's own caps straight to "search to the end".
-//           'reset' = put this tie's own caps back to the 3M base (does not touch other ties' caps).
+//           'reset' = put this tie's own caps back to the configured base (does not touch other ties' caps).
 function _reanalyzeTie(escalate){
   const ctx=window._solveCtx;if(!ctx||!ctx.ties)return;const cur=ctx.cur,mode=_benchMode();
   ctx.tieCaps=ctx.tieCaps||{};
-  const tc=ctx.tieCaps[cur]=ctx.tieCaps[cur]||{bench:3000000,mgr:3000000};
+  const tc=ctx.tieCaps[cur]=ctx.tieCaps[cur]||{bench:getBenchNodeCap(),mgr:getMgrNodeCap()};
   const prevBd=ctx.benchData&&ctx.benchData[cur],prevAn=ctx.analyses&&ctx.analyses[cur];
-  if(escalate==='reset'){tc.bench=3000000;tc.mgr=3000000;}
+  if(escalate==='reset'){tc.bench=getBenchNodeCap();tc.mgr=getMgrNodeCap();}
   else if(escalate==='forever'){tc.bench=1e12;tc.mgr=1e12;}
   else if(escalate===true){
     if(prevBd&&prevBd.capped)tc.bench*=3;
@@ -3322,7 +3615,7 @@ function _reanalyzeTie(escalate){
   }
   const _run=()=>{
     _recLog('re-analyse tie '+(cur+1)
-      +(escalate==='reset'?' (caps reset to 3M)'
+      +(escalate==='reset'?' (caps reset to '+(getBenchNodeCap()/1000000)+'M bench / '+(getMgrNodeCap()/1000000)+'M mgr)'
         :escalate==='forever'?' (search to the end)'
         :' (bench cap '+(tc.bench>=1e12?'end':(tc.bench/1000000)+'M')+', mgr cap '+(tc.mgr>=1e12?'end':(tc.mgr/1000000)+'M')+')')
       +' \u00b7 bench speed '+mode); // logged inside _run so a cancelled 150M forever-warning records nothing
@@ -3477,13 +3770,14 @@ function _tieCapWarn(cap,benchCombos,mgrExact,benchNodes,benchCombosChecked,benc
 function _reanalyzeBenchBtn(){
   // Re-run THIS tie at whatever cap it was last escalated to (persisted on ctx.tieCaps[cur]) — no arg
   // means "run at this tie's own current cap", so switching away and back keeps the 27M you paid for
-  // instead of silently dropping to 3M. Reset is a separate, explicit choice, only shown once this tie
-  // has actually been pushed past the 3M base. Per-tie caps never touch each other or the shared panel caps.
+  // instead of silently dropping to the configured base. Reset is a separate, explicit choice, only shown once this tie
+  // has actually been pushed past that base. Per-tie caps never touch each other or the shared panel caps.
   const ctx=window._solveCtx,cur=ctx&&ctx.cur,tc=ctx&&ctx.tieCaps&&ctx.tieCaps[cur];
-  const cap=tc?Math.max(tc.bench||0,tc.mgr||0):3000000;
-  const capTxt=cap>=1e12?' (to the end)':cap>3000000?' ('+(cap/1000000)+'M)':'';
+  const base=Math.max(getBenchNodeCap(),getMgrNodeCap());
+  const cap=tc?Math.max(tc.bench||0,tc.mgr||0):base;
+  const capTxt=cap>=1e12?' (to the end)':cap>base?' ('+(cap/1000000)+'M)':'';
   let html='<button class="btn gho sm" style="margin-top:8px;width:auto" onclick="_reanalyzeTie()">\u21bb Re-analyse this bench'+capTxt+'</button>';
-  if(cap>3000000)html+=' <button class="btn gho sm" style="margin-top:8px;width:auto" onclick="_reanalyzeTie(\'reset\')">\u21ba Reset to 3M</button>';
+  if(cap>base)html+=' <button class="btn gho sm" style="margin-top:8px;width:auto" onclick="_reanalyzeTie(\'reset\')">\u21ba Reset to '+(base/1000000)+'M</button>';
   return html+'<div id="tieReBenchWarn"></div>';
 }
 function _miniCapWarn(which,cap,exact,nodesUsed,combosChecked,mode,unitsChecked,unitsTotal,proofCeil,agg){
@@ -4629,6 +4923,7 @@ function _pickPanelSuffixes(picks,holdGroups){
   const tieNote=(r.bestXIs.length>1
     ?'<div class="tiny">'+r.bestXIs.length+' squads tie at '+sc.total+'. Default frees the most managers for +2 \u2014 this one keeps <b>'+cleanMgrs+'</b> clean of '+MANAGER_DB.length+'.</div>'
     :'<div class="tiny">'+cleanMgrs+' of '+MANAGER_DB.length+' managers give a clean +2 on this XI.</div>')+_mgrDepth+sw;
+  const _divTxt=(r.diversity&&r.diversity.mode)?(' \u00b7 diversity: '+r.diversity.label+(r.diversity.provenComplete?' (completed \u2014 proven optimal)':'')):'';
   $('#solveOut').innerHTML=
   '<div class="summary"><div class="bigrow"><div class="tot">'+sc.total+'<small>PRE-MANAGER \u00b7 UP TO '+(sc.total+2)+' WITH MANAGER (+2)</small></div>'
     +'<div class="rc"><div><div class="b" style="color:var(--cyan)">'+sc.rating+'</div><div class="l">RATING</div></div>'
@@ -4636,7 +4931,7 @@ function _pickPanelSuffixes(picks,holdGroups){
     +'<div class="rings"><div class="ring n"><b>'+sc.nations+'</b><span>NATIONS</span></div>'
     +'<div class="ring l"><b>'+sc.leagues+'</b><span>LEAGUES</span></div>'
     +'<div class="ring c"><b>'+sc.clubs+'</b><span>CLUBS</span></div></div>'
-    +'<div class="tiny" style="margin-top:8px">Chem '+chemFlag+' \u00b7 '+r.nodes.toLocaleString()+' nodes'+_msTxt+_faTxt+(r.capped?' \u00b7 result shown above':'')+'</div>'+tieNote+'</div>'
+    +'<div class="tiny" style="margin-top:8px">Chem '+chemFlag+' \u00b7 '+r.nodes.toLocaleString()+' nodes'+_msTxt+_faTxt+_divTxt+(r.capped?' \u00b7 result shown above':'')+'</div>'+tieNote+'</div>'
   +'<div class="panel"><h2>Starting XI</h2><div class="xi">'+xiHtml+'</div></div>'
   +'<div class="panel"><h2>Pick per hold</h2>'+hp+'<div class="tiny" style="margin-top:6px">In hold order. Committed cards need no pick.</div>'+(subPicks.length?'<div class="tiny" style="margin:8px 0 4px;color:var(--mut)">The rest won\u2019t start \u2014 pick these for sub / manager-insurance value:</div>'+subPicksHtml:'')+'</div>'
   +'<div class="panel"><h2>Bench \u2014 manager insurance</h2><div class="tiny">Best leftover from each unused hold. \u2605 = carries something fresh that can sub in if a manager clashes.</div><div class="xi" style="margin-top:6px">'+benchHtml+'</div>'+_reanalyzeBenchBtn()+'</div>'+benchNote;
@@ -4738,8 +5033,8 @@ function mgrGain(set,m){return (set.nationSet.has(m.nation)?0:1)+(set.leagueSet.
 function pickMgr(cap){
   if(!window._solved){$('#mgrOut').innerHTML='<div class="note">Solve the XI first.</div>';return}
   if(!managers.length){$('#mgrOut').innerHTML='<div class="note">Add at least one manager option.</div>';return}
-  _recLog(cap?'pick best manager: '+_recCapTxt(cap):'pick best manager (3M)'); // an explicit cap only comes from this panel's own keep-searching / search-to-the-end buttons
-  cap=cap||3000000;
+  _recLog(cap?'pick best manager: '+_recCapTxt(cap):'pick best manager ('+(getMgrNodeCap()/1000000)+'M)'); // an explicit cap only comes from this panel's own keep-searching / search-to-the-end buttons
+  cap=cap||getMgrNodeCap();
   // Show the same "solving..." UI the main solver uses, and defer the heavy work a tick so the
   // browser gets a chance to paint it first — otherwise (esp. on "Keep searching"/"Search to the
   // end", which can run well past the initial 3M-node cap) the tab just looks frozen with no feedback.
@@ -5815,8 +6110,8 @@ function solveContext(nodeCap){
   if(missingSlots.length){
     ctx={key,ok:false,xis:[],missing:[...new Set(missingSlots)]};
   }else{
-    const r=solveBest(form,cards,nodeCap||getHelperCap(),getRatingCeil());
-    const _cap=nodeCap||getHelperCap();ctx=(r.error||!r.bestXIs||!r.bestXIs.length)?{key,ok:false,xis:[],missing:[],cap:_cap}:{key,ok:true,xis:r.bestXIs.slice(),missing:[],capped:r.capped,cap:_cap};
+    const r=solveBest(form,cards,nodeCap||getHelperNodeCap(),getRatingCeil());
+    const _cap=nodeCap||getHelperNodeCap();ctx=(r.error||!r.bestXIs||!r.bestXIs.length)?{key,ok:false,xis:[],missing:[],cap:_cap}:{key,ok:true,xis:r.bestXIs.slice(),missing:[],capped:r.capped,cap:_cap};
   }
   if(!ctx.capped)_solveCache=ctx; // don't cache a capped result — a deeper search from the Solve tab may find better
   return ctx;
@@ -5840,7 +6135,7 @@ function runHelper(){
 }
 function runHelperDeep(cap){
   const el=$('#slotJudge');if(!el)return;
-  const nextCap=(cap||3000000)*3;
+  const nextCap=(cap||getHelperNodeCap())*3;
   el.innerHTML='<div class="tiny" style="color:var(--mut)">&#x23f3; Deeper search ('+Math.round(nextCap/1000000)+'M nodes)\u2026 this may take a few seconds.</div>';
   _showSolverOverlay();
   setTimeout(()=>{
@@ -6098,7 +6393,7 @@ function judgeSlotInline(preCtx){
       :'<div class="bigrow"><div class="tot" style="font-size:26px">'+verdict+'</div></div><div class="tiny" style="color:var(--ink)">'+detail+ctxNote+'</div>';
   }
     // Add a deeper-search button when the helper's solve was capped
-  const _helperCap=ctx&&ctx.cap?ctx.cap:3000000;
+  const _helperCap=ctx&&ctx.cap?ctx.cap:getHelperNodeCap();
   const _helperNextCap=_helperCap*3;
   const helperDeepBtn=(ctx&&ctx.capped)
     ?'<div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><button class="btn sec sm" style="margin:0" onclick="runHelperDeep('+_helperCap+')">\u23f3 Deeper search ('+Math.round(_helperNextCap/1000000)+'M nodes)</button>'
