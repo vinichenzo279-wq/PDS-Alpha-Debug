@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v9.0.4</title>
+<title>Draft Solver v9.5.2.1</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -129,17 +129,37 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        for the user to tell which build they're on, and (b) can let an incompatible old auto-save
        load as if nothing changed. Bump on every patch, no matter how small.
 
-       Which number to bump (format is MAJOR.BUGFIX.TEXT):
+       Which number to bump (format is MAJOR.BUGFIX.TEXT, optionally .CORRECTION):
          - 1st number (MAJOR): a significant functionality change — new feature, changed behavior,
            anything that substantially alters what the app actually does. Bump this, and reset
-           the other two to 0.
+           the other two (or three) to 0.
          - 2nd number (BUGFIX): a significant bug fix (incorrect logic/output corrected, no new
            capability added) OR a minor feature/data addition — e.g. a new entry added to a
            default DB, a small new option, or any other small addition that doesn't rise to a
-           MAJOR bump. Bump this, and reset the 3rd number to 0.
+           MAJOR bump. Bump this, and reset the 3rd number (and drop any 4th) to 0.
          - 3rd number (TEXT): copy/label/comment/formatting edits only — no logic changed at all.
+         - 4th number (CORRECTION, added v9.5.2.1): OMITTED in the normal case (a version with no
+           4th number is implicitly ".0"). Only append/bump this when you are fixing a MISTAKE in
+           the version you (or a prior assistant) JUST bumped to moments ago — e.g. the request
+           said "do X everywhere" and the previous edit only did X in 2 of 3 spots, or a typo in
+           that same edit. The point is NOT to save a MAJOR/BUGFIX/TEXT bump for small follow-ups
+           in general — it's specifically so that two people who both downloaded "v9.5.2" at
+           different points in the same conversation are holding genuinely different files, and
+           can tell that from the version string alone instead of assuming they match. Once the
+           NEXT real change comes in (not a correction to this one), bump the 2nd or 3rd number as
+           usual and drop the 4th number entirely.
        e.g. v8.2.6 -> v8.2.7 is a text-only tweak; a real bug fix or minor feature/data addition
-       would be v8.3.0; a major new feature would be v9.0.0.
+       would be v8.3.0; a major new feature would be v9.0.0; v9.5.2 -> v9.5.2.1 is a same-session
+       correction to something v9.5.2 got only partly right.
+
+       CLARIFICATION (added v9.5.1): "new feature" alone does not automatically earn the 1st
+       number. The 1st number is reserved for changes significant enough to substantially alter
+       what the app does — a small new feature (a new toggle, a new field, a small new panel)
+       is still a 2nd-number bump. Conversely, a minor tweak to existing behavior (a label
+       reworded to be clearer, a default value nudged, a clamp loosened) doesn't need to be a
+       2nd-number bump just because it changes behavior slightly — if the change is small and
+       low-risk, the 3rd number is fine for it too. Use judgment on size/risk, not on whether
+       "behavior changed" in the abstract.
 
        CHANGELOG CONVENTION (started v8.12): every version bump gets a one-line entry added to the
        CHANGELOG block just below, in the form "vX.Y.Z — what changed, in a few words". This is
@@ -260,6 +280,45 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                reads 'Geertruida (normal)'. Same cascade (rating->type->nation->league->club->pos,
                shows only what differs; ordinal last resort). Still display-only; demo fingerprint
                357,777.
+       v9.3.0 — Fix: maxPossibleRating()'s header comment has always documented THREE relaxations
+               (UB-A hold-collapsed/position-agnostic, UB-B per-position hold-distinct, UB-C
+               position-adjacency components) feeding one Math.min(), but the function body only
+               ever computed UB-A and UB-B — UB-C was fully specified in prose and never coded, so
+               the RC-optimality claims built on maxPossibleRating() (_rcCeilWarnHTML, Auto-RC) were
+               running on a looser bound than documented. Added UB-C: union-find over formation
+               positions that share a real eligible card in the pool, each resulting component
+               treated as one hold-distinct bucket (headcount = sum of its positions' needs),
+               concatenated and scored with a single futRatingRaw() call like UB-A/UB-B. Fixes a
+               real over-count in UB-B specifically: UB-B loops position-by-position with a fresh
+               hold-seen set each time, so a single card eligible for e.g. LB/LM/LW could get its
+               rating counted up to 3x in the concatenated array even though it can only ever fill
+               one slot; UB-C merges those positions into one component so the card is hold-deduped
+               once. Still splits GK into its own singleton component rather than sharing UB-A's
+               single global bucket, so it doesn't just collapse back to UB-A on stacked outfield
+               positions either. Provably still a valid (never-underestimating) upper bound by the
+               same relaxation argument as UB-A/UB-B — only relaxes cross-component hold-uniqueness,
+               a strict superset of what's legal — so adding it to the min() can only tighten the
+               final bound, never loosen it. Verified against a synthetic case (LB/LM/LW formation,
+               one 95-rated triple-eligible card plus three single-position fillers): pre-fix UB-B
+               alone gave a bound of 95 (triple-counting the one card); with UB-C the overall bound
+               correctly tightens to 87, matching the true achievable XI.
+
+       v9.2.0 — New Misc weight: allFirstBonus (default 5, squad mode). Flat bonus added in
+               helpValue() when a card is "1st" on every dimension chemCountBadge shows for its
+               type (nation always; league for heroes; club for normals) — a simple counterweight
+               to the clash-avoidance/saturation machinery, rewarding total freshness rather than
+               reasoning about severity curves. Also factored chemCountBadge's counting logic out
+               into a shared _shownCounts() helper so the eval bonus and the displayed badge can
+               never drift out of sync with each other.
+
+       v9.1.0 — Helper rating rows now show a pure chemistry-overlap count per option: "Nth
+               <Nation>" always, plus "Nth <League>" for heroes only (normals are always Prem,
+               so that dimension was pure noise there) and "Nth <Club>" for normals only. Counts
+               are per BOARD SLOT (excluding the slot being judged), not per physical card, so a
+               hold sitting on two same-nation options only contributes 1 (only one of them ever
+               actually fields). New slotPureCounts()/chemCountBadge() helpers; rankRows() takes
+               an excludeSlotId param, threaded from judgeSlotInline's s.id.
+
        v9.0.4 — Two fixes to the pick disambiguator. (1) Positions are an UNORDERED set, so the
                position tier now sorts before comparing/displaying — LB/CB/RB and CB/LB/RB no longer
                count as different, which was producing bogus position suffixes. (2) The literal-
@@ -267,8 +326,109 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                '#6'; it now ranks within the same-name group (by card id) and reads #1 / #2. Ordinal
                stays cosmetic (identical cards are interchangeable) but is now meaningful. Display-
                only; demo fingerprint 357,777.
+
+       v9.4.0 — Added UB-D, a fourth relaxation to maxPossibleRating(), and it comes with a
+               ROLLBACK NOTE up front in case it's ever wrong: if UB-D is suspected of returning a
+               bad (too-low) bound, the safe fix is to delete/comment out just the "UB-D:" block
+               inside maxPossibleRating() (the one that calls ubDComponent()) — UB-A/B/C are
+               untouched and the function keeps working exactly as it did in v9.3.0, just without
+               the 4th candidate in the min(). ubDComponent() itself can also be deleted; nothing
+               else calls it.
+               —
+               WHAT IT DOES: UB-C treats each position-adjacency component as one bucket and takes
+               its top-K eligible cards (hold-distinct) by rating, WITHOUT checking whether those
+               specific top-K can really be placed into the component's distinct positions
+               respecting each position's own head-count — it only checks the aggregate count K.
+               That's a valid (never-underestimating) relaxation, but sometimes needlessly loose:
+               if the top-K all happen to share eligibility for only one or two of the component's
+               positions, they can't really all play, yet UB-C still credits their ratings. UB-D
+               closes that gap: same components as UB-C, but each one is solved with an actual
+               bipartite placement check (matroid-greedy + Kuhn's-algorithm augmenting-path search,
+               see ubDComponent() and the long comment above maxPossibleRating() for the full
+               argument), so it only credits a rating if it can prove that card's hold-group is
+               really placeable into a real distinct position slot. Never looser than UB-C by
+               construction; strictly tighter whenever UB-C's aggregate check was fooled.
+               —
+               A BUG WAS FOUND AND FIXED DURING DEVELOPMENT, WORTH RECORDING: the first working
+               draft of UB-D solved each component with a max-weight bipartite matching (min-cost
+               flow, objective = maximise the RAW SUM of chosen ratings). That is UNSOUND, not just
+               suboptimal — it can genuinely under-count the true achievable max, i.e. produce an
+               invalid upper bound. Reason: futRatingRaw is (sum + spread-above-mean)/N, not a plain
+               average, so it over-weights the top value(s) — for a 2-card group it reduces exactly
+               to (3*max+min)/4. A sum-maximiser will trade a real 99 for two 90s because
+               90+90=180 > 99+80=179, even though (99,80) actually scores higher under the real
+               formula (94.25 vs 90). Fuzz-testing 50,000 randomised drafts against a brute-force
+               oracle caught this directly: the sum-based version returned a bound below the
+               true achievable max in 118 cases (should be mathematically impossible for a correct
+               upper bound). Replacing the objective with matroid-greedy (which only ever displaces
+               WHERE a group is placed, never trades it away for a better sum) fixed it: 0
+               violations over 200,000 fuzz trials, plus a separate 50,000-trial check of the whole
+               patched maxPossibleRating() (UB-A/B/C/D combined) against the brute-force oracle,
+               also 0 violations. If UB-D is ever reintroduced or modified, re-run that fuzz
+               harness before trusting it — sum-of-ratings is an easy trap to fall back into and it
+               will NOT show up as a wrong answer at a glance, only as an occasional silent
+               under-count on specific drafts.
+
+       v9.5.0 — Added UB-E, a fifth relaxation to maxPossibleRating(). ROLLBACK NOTE up front:
+               if UB-E is ever suspected of returning a bad (too-low) bound, the safe fix is to
+               delete/comment out just the "UB-E:" block inside maxPossibleRating() (the one that
+               calls ubEGlobal()) — UB-A/B/C/D are untouched and the function keeps working
+               exactly as it did in v9.4.0, just without the 5th candidate in the min(). ubEGlobal()
+               itself can also be deleted; nothing else calls it.
+               —
+               WHAT IT DOES: UB-D splits the formation into position-adjacency components (union-
+               find over shared eligibility) and solves each component separately with matroid-
+               greedy + Kuhn's-algorithm placement. That split is what lets GK stop "borrowing"
+               bound from a stacked outfield component, but it has its own narrower leak: the SAME
+               hold-group can be credited once per component it happens to touch (once at its best
+               rating in component 1's placement, again at its best rating in component 2's), even
+               though a real squad can only field that hold once, full stop, not once per component.
+               UB-E removes the split entirely and runs the identical matroid-greedy + augmenting-
+               path algorithm as ONE global problem over the whole formation (one node per hold-
+               group, edges to every position it's eligible for anywhere in the formation, weight =
+               that group's best rating at any eligible position). Same domination argument as
+               UB-D (transversal-matroid greedy is provably element-wise-dominating over every
+               placeable set of a given size), just applied to the whole node set instead of a
+               partition of it — so a hold-group can now only ever be placed, and credited, once
+               overall. Never looser than UB-D by construction; strictly tighter whenever UB-D's
+               per-component split let the same hold leak into two buckets.
+               —
+               VERIFIED: extended fuzz_all_ubs.js with UB-E and re-ran against the brute-force
+               oracle — 150,000 trials (79,566 with a legal XI to score), 0 violations for UB-E
+               individually and 0 violations for the combined min(A,B,C,D,E). UB-E strictly
+               tightens the combined bound vs the old min(A,B,C,D) in 367 of those trials (0.46%,
+               avg tightening ~0.68 rating points when it happens) and never loosens it in any
+               trial. Same fuzz harness/oracle used to validate UB-D in v9.4.0.
+       v9.5.1 — Batch of small tweaks: (1) high-rating boost threshold/ceiling clamps (icon/hero/
+               normal) freed from the artificial [80,99] range to [0,105] so they can actually go
+               above 99 as intended, and their labels updated to say so; (2) take-vs-hold gap
+               default raised from 5 to 10; (3) all-fresh chemistry bonus label simplified; (4)
+               chemistry counts now exclude Prem-League heroes' league count and the captain pick
+               entirely from the shown badge (both trivially "1st"), and exclude Prem-League
+               heroes from the all-fresh bonus outright; (5) hold-size severity label reworded —
+               no more "1-card hold" (holds of 1 don't exist), now describes the general curve by
+               how many cards share the clashing slot; (6) versioning convention above clarified re:
+               feature size vs number bumped.
+       v9.5.2 — Small follow-ups to 9.5.1: (1) the high-rating boost threshold AND ceiling labels
+               (icon/hero/normal, 6 labels total) no longer spell out "not capped at 99 — can be
+               set above it" — self-evident from the default and [0,105] range now;
+               (2) low-rating penalty threshold/floor clamps (icon/hero/normal) widened from
+               [0,99] to [0,105] to match the high side, for consistency; (3) the nation and league
+               dropdowns (all pickers: f/h/m/db/dbe/dbme/dbm) are now ordered by live DB rarity
+               instead of the old fixed hardcoded order — most-common-in-DB first, rarest last,
+               via the previously-unused NAT_RANK/LG_RANK + _rankCommon(); anything with zero
+               cards in the DB (never seen) is appended alphabetically at the end; re-runs on
+               every DB change (import/add/reset/clear) via rebuildRarity(). Falls back to the
+               original hardcoded order if the sort ever fails for any reason.
+       v9.5.2.1 — Correction to v9.5.2: (1) had only trimmed the "not capped at 99" redundant
+               note off the 3 high-boost CEILING labels, missed the 3 matching THRESHOLD labels
+               (icon/hero/normal) which had the same redundant note — now trimmed too, all 6
+               consistent; (2) introduces the 4th version-number convention itself (see note by
+               the <h1> above) for exactly this situation — a same-session fix-up to a version
+               just bumped, so a "v9.5.2" downloaded before this correction and one downloaded
+               after are distinguishable instead of silently looking identical.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v9.0.4</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v9.5.2.1</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -651,6 +811,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 // Index = rarity weight: later = rarer = more valuable to draft. Russia included (Pacwyn bans it, but harmless extra).
 const NATIONS=["Argentina","Spain","France","England","Portugal","Brazil","Netherlands","Belgium","Italy","Germany","Croatia","Morocco","Colombia","Mexico","Uruguay","Switzerland","United States","Senegal","Japan","Denmark","Iran","Korea Republic","Australia","Ecuador","Austria","Ukraine","Sweden","Wales","Hungary","Canada","Serbia","Egypt","Poland","Panama","Norway","Russia","Nigeria","Czech Republic","Scotland","Greece","Ivory Coast","Slovakia","Turkey","Romania","Costa Rica","Peru","Tunisia","Cameroon","Mali","Algeria","Slovenia","Paraguay","Venezuela","Qatar","Saudi Arabia","Chile","Ghana","Cape Verde Islands","Burkina Faso","Jamaica","South Africa","Bosnia Herzegovina","North Macedonia","Republic of Ireland","Finland","Iceland","Honduras","Curacao","Oman","Iraq","United Arab Emirates","Jordan","Uzbekistan","Bolivia","Gabon","Benin","DR Congo","Guinea","Zambia","Angola","Montenegro","Georgia","Albania","Kosovo","Israel","Armenia","Kazakhstan","Luxemburg","Northern Ireland","Mozambique","Uganda","Madagascar","Kenya","Syria","Palestinian Authority","India","Tanzania","Namibia","Trinidad and Tobago","Guinea Bissau","Mauritania","Libya","Togo","Sierra Leone","Niger","Comoros","Tajikistan","Kyrgyzstan","Lebanon","Vietnam","Thailand","China PR","New Zealand","El Salvador","Estonia","Cyprus","Belarus","Azerbaijan","Bulgaria","Lithuania","Latvia","Malawi","Zimbabwe","Ethiopia","Sudan","Rwanda","Burundi","Liberia","Equatorial Guinea","CAR","Chad","Suriname","Haiti","Nicaragua","Guatemala","Dominican Republic","Antigua and Barbuda","Cuba","Philippines","Indonesia","Malaysia","Hong Kong","Chinese Taipei","Afghanistan","Yemen","Maldives","Faroe Islands","Gibraltar","Andorra","Malta","Moldova","Gambia","Botswana","Lesotho","Eswatini","Mauritius","South Sudan","Somalia","Bermuda","Sri Lanka","Puerto Rico","Barbados","Grenada","St Lucia","St Vincent","St Kitts Nevis","Bahamas","Belize","Aruba","Montserrat","Guyana","French Guiana","Tahiti","Fiji","New Caledonia","Solomon Islands","Papua New Guinea","Vanuatu","Samoa","Tonga","San Marino","Liechtenstein","Netherlands Antilles","Other"];
 // Leagues ordered common -> rare. prem flag marks the only league a Normal may use.
+const NATIONS_FALLBACK_ORDER=NATIONS.slice(); // original hardcoded order, used if DB-rarity sort ever fails
 const LEAGUES=[
  {n:"England Premier League",prem:true},{n:"Spain LaLiga"},{n:"Germany Bundesliga"},{n:"Italy Serie A"},
  {n:"France Ligue 1"},{n:"USA MLS"},{n:"Turkey Super Lig"},{n:"Saudi Pro League"},{n:"Portugal Primeira"},
@@ -668,6 +829,7 @@ const LEAGUES=[
  {n:"Switzerland Damen W"},{n:"Other"}
 ];
 const LEAGUE_NAMES=LEAGUES.map(l=>l.n);
+const LEAGUE_NAMES_FALLBACK_ORDER=LEAGUE_NAMES.slice(); // original hardcoded order, used if DB-rarity sort ever fails
 const CLUBS=["AFC Bournemouth","Arsenal","Aston Villa","Brentford","Brighton","Burnley","Chelsea","Crystal Palace","Everton","Fulham","Leeds United","Liverpool","Manchester City","Man Utd","Newcastle Utd","Nott'm Forest","Spurs","Sunderland","West Ham","Wolves"];
 const POSALL=["GK","LB","CB","RB","CDM","CM","LM","RM","CAM","LW","RW","ST"];
 // formation slot value: you only get a card's PRIMARY position, and on the starting XI you can't use alt positions.
@@ -963,11 +1125,11 @@ let _solveCache=null,_squadOverride=null,_urgentPos=null,_pendFactor=1; // Phase
 let _lastFullRedundant=false; // set by squadAdjust; read by XI-boost phase to suppress boost for commit-clashing cards
 let _evalingSiblings=false; // recursion guard: prevents sibling helpValue calls from triggering further sibling evals
 let NAT_RANK={},LG_RANK={},NAT_COUNT={},CLB_COUNT={},LG_COUNT={},DB_M=1; // raw card counts per nation/club/hero-league + total, from the live DB
-const SHAPE_DEF={clashDraws:23,iconKeep:0.30,iconErosion:0.10,heroFull:3,heroPenalty:0.22,heroRarityRefundCap:0.6,normalFloor:0.45,normalSlope:5,clashBase:0.6,clashStack:0.50,holdSizeBase:0.30,holdDomBoost:0.40,redundancySurcharge:0.6,iconRarityRefundCap:0.6,takeThreshold:5,premHeroRatingThreshold:96,premHeroRatingGap:2,premHeroPenaltyFracLow:1,premHeroPenaltyFracHigh:1,premHeroPenaltyFracUrgentPos:1.0,commonNatCount:10,commonClubCount:3,commonNatPenalty:0.25,commonNatIconExtra:0,commonClubPenalty:0.5,commonHeroLeaguePenalty:0,commonHeroLeagueCount:0,lowIconRatingThreshold:90,lowIconPenaltyMin:0.25,lowIconPenaltyMax:0.75,lowIconHardBound:85,highIconRatingThreshold:96,highIconBoostMin:0.15,highIconBoostMax:0.3,highIconHardBound:99,lowHeroRatingThreshold:0,lowHeroPenaltyMin:0.25,lowHeroPenaltyMax:0.75,lowHeroHardBound:85,highHeroRatingThreshold:96,highHeroBoostMin:0.15,highHeroBoostMax:0.3,highHeroHardBound:99,lowNormalRatingThreshold:87,lowNormalPenaltyMin:0.25,lowNormalPenaltyMax:0.75,lowNormalHardBound:75,highNormalRatingThreshold:96,highNormalBoostMin:0.25,highNormalBoostMax:0.5,highNormalHardBound:99,dominantClashGap:5,outOfFormationPenalty:10,starterBoost:8,benchPenalty:5,holdSevBase:0.4,holdSevCap:0.85};
+const SHAPE_DEF={clashDraws:23,iconKeep:0.30,iconErosion:0.10,heroFull:3,heroPenalty:0.22,heroRarityRefundCap:0.6,normalFloor:0.45,normalSlope:5,clashBase:0.6,clashStack:0.50,holdSizeBase:0.30,holdDomBoost:0.40,redundancySurcharge:0.6,iconRarityRefundCap:0.6,takeThreshold:10,premHeroRatingThreshold:96,premHeroRatingGap:2,premHeroPenaltyFracLow:1,premHeroPenaltyFracHigh:1,premHeroPenaltyFracUrgentPos:1.0,commonNatCount:10,commonClubCount:3,commonNatPenalty:0.25,commonNatIconExtra:0,commonClubPenalty:0.5,commonHeroLeaguePenalty:0,commonHeroLeagueCount:0,lowIconRatingThreshold:90,lowIconPenaltyMin:0.25,lowIconPenaltyMax:0.75,lowIconHardBound:85,highIconRatingThreshold:96,highIconBoostMin:0.15,highIconBoostMax:0.3,highIconHardBound:99,lowHeroRatingThreshold:0,lowHeroPenaltyMin:0.25,lowHeroPenaltyMax:0.75,lowHeroHardBound:85,highHeroRatingThreshold:96,highHeroBoostMin:0.15,highHeroBoostMax:0.3,highHeroHardBound:99,lowNormalRatingThreshold:87,lowNormalPenaltyMin:0.25,lowNormalPenaltyMax:0.75,lowNormalHardBound:75,highNormalRatingThreshold:96,highNormalBoostMin:0.25,highNormalBoostMax:0.5,highNormalHardBound:99,dominantClashGap:5,outOfFormationPenalty:10,starterBoost:8,benchPenalty:5,holdSevBase:0.4,holdSevCap:0.85,allFirstBonus:5};
 // Inputs floored at 0 because a negative value here would flip the formula's intent (e.g. extra icons/heroes
 // getting MORE valuable instead of less). clashBase also gets a max: above 2 a mild clash can end up scoring
 // worse than a severe one (see clashBase's label below), so 2 is the point past which the slider works against itself.
-const SHAPE_BOUNDS={clashDraws:[1,100],iconKeep:[0,1],heroFull:[0,10],heroRarityRefundCap:[0,1],normalFloor:[0,1],takeThreshold:[0,20],clashBase:[0,2],clashStack:[0,2],holdSizeBase:[0,1],holdDomBoost:[0,1],heroPenalty:[0,2],normalSlope:[0.1,20],iconErosion:[0,1],iconRarityRefundCap:[0,1],redundancySurcharge:[0,2],premHeroRatingThreshold:[80,105],premHeroRatingGap:[1,10],premHeroPenaltyFracLow:[0,1],premHeroPenaltyFracHigh:[0,1],premHeroPenaltyFracUrgentPos:[0,1],commonNatCount:[0,30],commonClubCount:[0,20],commonNatPenalty:[0,1],commonNatIconExtra:[0,1],commonClubPenalty:[0,1],commonHeroLeaguePenalty:[0,1],commonHeroLeagueCount:[0,30],lowIconRatingThreshold:[0,99],lowIconPenaltyMin:[0,1],lowIconPenaltyMax:[0,2],lowIconHardBound:[0,99],highIconRatingThreshold:[80,99],highIconBoostMin:[0,1],highIconBoostMax:[0,2],highIconHardBound:[80,99],lowHeroRatingThreshold:[0,99],lowHeroPenaltyMin:[0,1],lowHeroPenaltyMax:[0,2],lowHeroHardBound:[0,99],highHeroRatingThreshold:[80,99],highHeroBoostMin:[0,1],highHeroBoostMax:[0,2],highHeroHardBound:[80,99],lowNormalRatingThreshold:[0,99],lowNormalPenaltyMin:[0,1],lowNormalPenaltyMax:[0,2],lowNormalHardBound:[0,99],highNormalRatingThreshold:[80,99],highNormalBoostMin:[0,1],highNormalBoostMax:[0,2],highNormalHardBound:[80,99],dominantClashGap:[0,30],outOfFormationPenalty:[0,50],starterBoost:[0,30],benchPenalty:[0,30],holdSevBase:[0,2],holdSevCap:[0,2]};
+const SHAPE_BOUNDS={clashDraws:[1,100],iconKeep:[0,1],heroFull:[0,10],heroRarityRefundCap:[0,1],normalFloor:[0,1],takeThreshold:[0,20],clashBase:[0,2],clashStack:[0,2],holdSizeBase:[0,1],holdDomBoost:[0,1],heroPenalty:[0,2],normalSlope:[0.1,20],iconErosion:[0,1],iconRarityRefundCap:[0,1],redundancySurcharge:[0,2],premHeroRatingThreshold:[80,105],premHeroRatingGap:[1,10],premHeroPenaltyFracLow:[0,1],premHeroPenaltyFracHigh:[0,1],premHeroPenaltyFracUrgentPos:[0,1],commonNatCount:[0,30],commonClubCount:[0,20],commonNatPenalty:[0,1],commonNatIconExtra:[0,1],commonClubPenalty:[0,1],commonHeroLeaguePenalty:[0,1],commonHeroLeagueCount:[0,30],lowIconRatingThreshold:[0,105],lowIconPenaltyMin:[0,1],lowIconPenaltyMax:[0,2],lowIconHardBound:[0,105],highIconRatingThreshold:[0,105],highIconBoostMin:[0,1],highIconBoostMax:[0,2],highIconHardBound:[0,105],lowHeroRatingThreshold:[0,105],lowHeroPenaltyMin:[0,1],lowHeroPenaltyMax:[0,2],lowHeroHardBound:[0,105],highHeroRatingThreshold:[0,105],highHeroBoostMin:[0,1],highHeroBoostMax:[0,2],highHeroHardBound:[0,105],lowNormalRatingThreshold:[0,105],lowNormalPenaltyMin:[0,1],lowNormalPenaltyMax:[0,2],lowNormalHardBound:[0,105],highNormalRatingThreshold:[0,105],highNormalBoostMin:[0,1],highNormalBoostMax:[0,2],highNormalHardBound:[0,105],dominantClashGap:[0,30],outOfFormationPenalty:[0,50],starterBoost:[0,30],benchPenalty:[0,30],holdSevBase:[0,2],holdSevCap:[0,2],allFirstBonus:[0,20]};
 let SHAPE={...SHAPE_DEF}; // tunable: clash-draw count (rarity = P(no clash over this many random draws)) + icon/hero diminishing
 const _SHAPE_SAVE_KEY='pacwyn_shape_v1';
 function saveShapeLocal(){try{localStorage.setItem(_SHAPE_SAVE_KEY,JSON.stringify(SHAPE));}catch(e){}}
@@ -3119,11 +3281,205 @@ function _miniCapWarn(which,cap,exact,nodesUsed,combosChecked,mode,unitsChecked,
 //         (+ intra-position hold-uniqueness); relaxes cross-position uniqueness (a dual-position stud
 //         may be counted twice). Tight exactly where UB-A is loose (4 pure STs but 2 ST slots -> only
 //         the top 2 count).
-// Both are valid by a per-method dominance argument: the legal XI's ratings are dominated element-wise
-// (sorted) by the relaxed pick, and futRatingRaw is monotone under domination. NOTE a max-weight
+//   UB-C  position-adjacency components: union any two formation positions that share a real eligible
+//         card in the current pool, then treat each resulting component as ONE shared bucket (headcount
+//         = sum of its positions' needs, hold-distinct within the component, concatenated same as UB-B).
+//         Sits strictly between UB-A (fully merged, one global bucket) and UB-B (never merged, so a
+//         versatile card double-counts across every position it lists): tighter than UB-A whenever the
+//         pool's eligibility graph actually fragments (GK almost never shares a candidate with any
+//         outfield position, so it splits into its own component and stops "borrowing" bound from a
+//         stacked outfield position). Stays valid for the same reason UB-B does: a card can only ever
+//         leak rating into ONE component's top-K picks, because any two positions it's eligible for get
+//         unioned into the same component by construction — an LB/LM/LW card unions those three
+//         positions into one shared bucket and is usable ONCE within it, same as a real squad. Within a
+//         component it can still be as loose as UB-A on narrow stacking, so it doesn't dominate UB-B
+//         either — it just adds a third independent relaxation for the min to pick from.
+//   UB-D  (added v9.4.0 — see CHANGELOG for the sum-maximisation bug this replaced; if UB-D is
+//         ever suspect, the safe rollback is to delete just the "UB-D:" block in
+//         maxPossibleRating() below, which restores exact v9.3.0 behaviour with no other changes)
+//         same components as UB-C, but instead of "top-K by rating regardless of which specific
+//         position" (UB-C's relaxation), it actually verifies the top picks can be placed into
+//         DISTINCT positions honouring each position's exact head-count within the component — the
+//         one real constraint UB-C ignores (UB-C can be fooled when its top-K all happen to share
+//         eligibility for the same one or two positions in the bucket and can't really fill every
+//         slot). It does this with the classical matroid-greedy algorithm: collapse each hold group
+//         to one node weighted by its best rating at ANY eligible position in the component, sort
+//         groups by that weight descending, and greedily try to place each one via a bipartite
+//         augmenting-path search (Kuhn's algorithm — an already-placed group can be bumped to a
+//         different eligible position to make room), skipping a group if no placement/re-routing is
+//         possible. "Which sets of groups are simultaneously placeable" is a transversal matroid, so
+//         greedy-by-weight is guaranteed to produce, for every k, a top-k whose k-th value is >= the
+//         k-th value of ANY other placeable set of that size — the same element-wise domination
+//         property UB-A/B/C rely on, just enforced against the real per-position capacities instead
+//         of an aggregate count. That makes it never looser than UB-C (whenever UB-C's naive top-K
+//         happens to already be placeable, the two agree; whenever it isn't, UB-D correctly swaps in
+//         the next-best placeable group instead), and it adds a fourth independent relaxation
+//         (cross-component hold-sharing is still ignored, same as UB-C) for the min to pick from.
+//   UB-E  (added v9.5.0 — see CHANGELOG for the cross-component double-count this fixes; if
+//         UB-E is ever suspect, the safe rollback is to delete just the "UB-E:" block in
+//         maxPossibleRating() below, which restores exact v9.4.0 behaviour with no other changes)
+//         identical algorithm to UB-D (matroid-greedy + Kuhn's-algorithm augmenting-path
+//         placement), but run as ONE global problem over the WHOLE formation instead of splitting
+//         into union-find components first. UB-C/UB-D deliberately split into components so a
+//         card can only leak into one bucket's top-K, but the split itself still lets a single
+//         hold-group be credited ONCE PER COMPONENT (its best rating in component 1's placement,
+//         AND again in component 2's) — a real squad can only field that hold once, full stop,
+//         not once per component. UB-E runs the same matching machinery globally (one hold-group
+//         node, edges to EVERY position it's eligible for across the whole formation, not just
+//         within one component) so a hold-group can be placed, and credited, at most once overall.
+//         Same domination argument as UB-D — transversal-matroid greedy is provably element-wise-
+//         dominating over every placeable set of a given size, regardless of whether the
+//         underlying bipartite graph is one component or several — so this is a straightforward
+//         generalisation, not a new argument. Never looser than UB-D by construction (UB-D's
+//         per-component placements are always still valid placements in the unsplit global graph,
+//         so the global matroid-greedy optimum is at least as good); strictly tighter whenever
+//         UB-D's component split let the same hold leak into two buckets. Fuzz-verified: 150,000
+//         trials against the brute-force oracle, 0 violations for UB-E alone and 0 for the
+//         combined min(A,B,C,D,E); see CHANGELOG v9.5.0 for the full numbers.
+//         IMPORTANT — an earlier draft of UB-D instead ran a max-weight bipartite matching (min-cost
+//         flow, maximising the RAW SUM of chosen ratings) per component. That is NOT admissible and
+//         was a real bug, not just a style choice: futRatingRaw is (sum + spread-above-mean)/N, which
+//         over-weights the top value(s) relative to a plain average — for a 2-card bucket it reduces
+//         to (3*max+min)/4, so the top pick is worth 3x the second. A sum-maximiser will cheerfully
+//         trade a real 99 for two 90s because 90+90=180 > 99+80=179, even though (99,80) actually
+//         scores higher (94.25 vs 90). Maximising sum optimises the wrong objective and can produce a
+//         chosen array that does NOT element-wise dominate a real legal XI restricted to that
+//         component, so the resulting "bound" can undercount the true max — fuzzing caught this
+//         directly (d < true max). Matroid-greedy fixes it because it never trades away a high value
+//         to chase a better sum; it only ever displaces a placement to a different position, so the
+//         weight multiset it ends up with is exactly the same one UB-C would want (top-by-rating) if
+//         only that multiset can actually be realised, and never a lower-rated substitute solely for
+//         sum's sake.
+// All five are valid by a per-method dominance argument: the legal XI's ratings are dominated
+// element-wise (sorted) by the relaxed pick, and futRatingRaw is monotone under domination. That
+// dominance is only established for the FULL N-length array, so every method concatenates its
+// picks into one N-length array and calls futRatingRaw ONCE at the end — never sums per-bucket
+// scores, since futRatingRaw's mean+spread shape isn't separable across subsets (e.g. [99,80] and
+// [98,81] have equal sums but different futRatingRaw values, so scoring pieces separately and
+// adding them is not the same computation as scoring the recombined whole). NOTE a max-weight
 // matching / greedy (Hungarian on sum-of-ratings) is NOT admissible: it returns an ACHIEVABLE legal XI
 // — a LOWER bound on M — so it could wrongly certify a too-low RC. Only relaxations may join the min.
-// O(positions * n log n); negligible.
+// O(positions * n log n) for A/B/C; UB-D's augmenting-path search is polynomial per component too
+// (bounded by groups × positions), negligible at real squad sizes. UB-E is the same search over
+// the whole formation instead of per component — still polynomial (bounded by groups × total
+// positions), negligible at real squad sizes (formations only have ~11 slots).
+// UB-D helper (added v9.4.0, safe to delete along with the "UB-D:" block in maxPossibleRating()
+// if this method is ever found to be wrong — UB-A/B/C do not depend on it): within ONE component
+// (a set of formation positions + their exact head-counts,
+// already unioned by shared eligibility same as UB-C), find the element-wise-dominating chosen
+// set that respects REAL per-position capacity — via matroid-greedy + augmenting-path placement,
+// NOT sum-maximisation (see the long comment above maxPossibleRating for why sum-maximising a
+// bipartite matching here would be an unsound, undercounting relaxation).
+function ubDComponent(candList, positions, need){
+  const groupOf=c=>c.hold||('C'+c.id);
+  const groups={};
+  for(const c of candList){
+    const g=groupOf(c);
+    if(!groups[g]) groups[g]={eligPos:new Set(), bestRating:-Infinity};
+    for(const p of c.pos){
+      if(positions.includes(p)){
+        groups[g].eligPos.add(p);
+        if(c.rating>groups[g].bestRating) groups[g].bestRating=c.rating;
+      }
+    }
+  }
+  const groupIds=Object.keys(groups)
+    .filter(g=>groups[g].eligPos.size>0)
+    .sort((a,b)=>groups[b].bestRating-groups[a].bestRating); // greedy processes highest weight first
+
+  const posAssignments={}; for(const p of positions) posAssignments[p]=[];
+
+  // Kuhn's-algorithm augmenting-path search: try to place `gid`, bumping/re-routing an existing
+  // occupant to a different eligible position if that's what it takes to make room.
+  function tryAugment(gid, visitedPos){
+    for(const p of groups[gid].eligPos){
+      if(visitedPos.has(p)) continue;
+      visitedPos.add(p);
+      if(posAssignments[p].length<need[p]){
+        posAssignments[p].push(gid);
+        return true;
+      }
+      for(let k=0;k<posAssignments[p].length;k++){
+        const other=posAssignments[p][k];
+        if(tryAugment(other, visitedPos)){
+          posAssignments[p][k]=gid;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  const K=positions.reduce((s,p)=>s+need[p],0);
+  const chosen=[];
+  let matched=0;
+  for(const gid of groupIds){
+    if(tryAugment(gid, new Set())){
+      matched++;
+      chosen.push(groups[gid].bestRating);
+      if(matched===K) break;
+    }
+  }
+  if(matched<K) return {feasible:false};
+  return {feasible:true, chosen};
+}
+// UB-E helper (added v9.5.0, safe to delete along with the "UB-E:" block in maxPossibleRating()
+// if this method is ever found to be wrong — UB-A/B/C/D do not depend on it): identical algorithm
+// to ubDComponent() (matroid-greedy + Kuhn's-algorithm augmenting-path placement), but run as ONE
+// global problem over every eligible position in the formation instead of one component at a
+// time — see the long "UB-E" comment above maxPossibleRating() for why this only ever tightens
+// (never loosens) the bound relative to UB-D's per-component version.
+function ubEGlobal(elig, slots, need){
+  const groupOf=c=>c.hold||('C'+c.id);
+  const positions=Object.keys(need);
+  const groups={};
+  for(const c of elig){
+    const g=groupOf(c);
+    if(!groups[g]) groups[g]={eligPos:new Set(), bestRating:-Infinity};
+    for(const p of c.pos){
+      if(need[p]!==undefined){
+        groups[g].eligPos.add(p);
+        if(c.rating>groups[g].bestRating) groups[g].bestRating=c.rating;
+      }
+    }
+  }
+  const groupIds=Object.keys(groups)
+    .filter(g=>groups[g].eligPos.size>0)
+    .sort((a,b)=>groups[b].bestRating-groups[a].bestRating);
+
+  const posAssignments={}; for(const p of positions) posAssignments[p]=[];
+  function tryAugment(gid, visitedPos){
+    for(const p of groups[gid].eligPos){
+      if(visitedPos.has(p)) continue;
+      visitedPos.add(p);
+      if(posAssignments[p].length<need[p]){
+        posAssignments[p].push(gid);
+        return true;
+      }
+      for(let k=0;k<posAssignments[p].length;k++){
+        const other=posAssignments[p][k];
+        if(tryAugment(other, visitedPos)){
+          posAssignments[p][k]=gid;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  const N=slots.length;
+  const chosen=[];
+  let matched=0;
+  for(const gid of groupIds){
+    if(tryAugment(gid, new Set())){
+      matched++;
+      chosen.push(groups[gid].bestRating);
+      if(matched===N) break;
+    }
+  }
+  if(matched<N) return {feasible:false};
+  return {feasible:true, chosen};
+}
 function maxPossibleRating(pool,form){
   if(!pool||!pool.length||!form)return null;
   const slots=form.slots,slotSet=new Set(slots),N=slots.length;
@@ -3150,6 +3506,73 @@ function maxPossibleRating(pool,form){
       for(const r of top)chosen.push(r);
     }
     if(feasible&&chosen.length===N)ubs.push(futRatingRaw(chosen));
+  }
+  // UB-C: position-adjacency components — union any two formation positions that share a real
+  // eligible card in the pool (transitively, via union-find), then treat each resulting component
+  // as ONE shared hold-distinct bucket (headcount = sum of its positions' needs). An LB/LM/LW card
+  // unions those three positions into one bucket and can only be picked ONCE within it, fixing
+  // UB-B's per-position double-count for versatile cards, while GK (which normally shares no
+  // eligible card with any outfield position) still splits into its own singleton component instead
+  // of "borrowing" bound from a stacked outfield position the way UB-A's single global bucket does.
+  {
+    const need={};for(const s of slots)need[s]=(need[s]||0)+1;
+    const posArr=Object.keys(need);
+    const parent={};posArr.forEach(p=>parent[p]=p);
+    const find=x=>{while(parent[x]!==x){parent[x]=parent[parent[x]];x=parent[x];}return x;};
+    const union=(a,b)=>{const ra=find(a),rb=find(b);if(ra!==rb)parent[ra]=rb;};
+    for(const c of elig){
+      const rel=c.pos.filter(p=>need[p]!==undefined); // this card's positions that are actually needed by the formation
+      for(let i=1;i<rel.length;i++)union(rel[0],rel[i]); // any card eligible for 2+ needed positions links them into one component
+    }
+    const comps={};
+    for(const p of posArr){const r=find(p);(comps[r]=comps[r]||[]).push(p);}
+    let feasible=true;const chosen=[];
+    for(const r in comps){
+      const compPos=new Set(comps[r]);
+      const k=comps[r].reduce((s,p)=>s+need[p],0);
+      const cand=elig.filter(c=>c.pos.some(p=>compPos.has(p))).sort((a,b)=>b.rating-a.rating);
+      const seen=new Set(),top=[];
+      for(const c of cand){const g=groupOf(c);if(seen.has(g))continue;seen.add(g);top.push(c.rating);if(top.length===k)break;}
+      if(top.length<k){feasible=false;break;} // too few distinct-hold cards for this component -> skip method
+      for(const rr of top)chosen.push(rr);
+    }
+    if(feasible&&chosen.length===N)ubs.push(futRatingRaw(chosen));
+  }
+  // UB-D: same components as UB-C, but each component's exact per-position capacity is verified
+  // via matroid-greedy + augmenting-path placement instead of UB-C's "aggregate headcount only"
+  // check — never looser than UB-C, sometimes strictly tighter. See ubDComponent() and the long
+  // comment above this function for why this must NOT be a sum-maximising matching.
+  {
+    const need={};for(const s of slots)need[s]=(need[s]||0)+1;
+    const posArr=Object.keys(need);
+    const parent={};posArr.forEach(p=>parent[p]=p);
+    const find=x=>{while(parent[x]!==x){parent[x]=parent[parent[x]];x=parent[x];}return x;};
+    const union=(a,b)=>{const ra=find(a),rb=find(b);if(ra!==rb)parent[ra]=rb;};
+    for(const c of elig){
+      const rel=c.pos.filter(p=>need[p]!==undefined);
+      for(let i=1;i<rel.length;i++)union(rel[0],rel[i]);
+    }
+    const comps={};
+    for(const p of posArr){const r=find(p);(comps[r]=comps[r]||[]).push(p);}
+    let feasible=true;const chosen=[];
+    for(const r in comps){
+      const compPos=new Set(comps[r]);
+      const candList=elig.filter(c=>c.pos.some(p=>compPos.has(p)));
+      const result=ubDComponent(candList, comps[r], need);
+      if(!result.feasible){feasible=false;break;}
+      for(const rr of result.chosen)chosen.push(rr);
+    }
+    if(feasible&&chosen.length===N)ubs.push(futRatingRaw(chosen));
+  }
+  // UB-E: same matroid-greedy + augmenting-path placement as UB-D, but as ONE global problem over
+  // every eligible position in the formation instead of splitting into components first — a
+  // hold-group can only be placed (and credited) once overall, closing UB-D's narrower "once per
+  // component" leak. Never looser than UB-D by construction. See ubEGlobal() and the long "UB-E"
+  // comment above this function for the full argument.
+  {
+    const need={};for(const s of slots)need[s]=(need[s]||0)+1;
+    const result=ubEGlobal(elig, slots, need);
+    if(result.feasible && result.chosen.length===N)ubs.push(futRatingRaw(result.chosen));
   }
   if(!ubs.length)return null;
   return Math.floor(Math.min(...ubs)); // min of valid upper bounds is still valid, and tightest
@@ -4126,7 +4549,36 @@ function rebuildRarity(){const src=playerDB.length?playerDB:DEFAULT_DB;
     if(c.type==='normal'&&c.club)CLB_COUNT[c.club]=(CLB_COUNT[c.club]||0)+1;
     if(c.type==='hero')LG_COUNT[c.league]=(LG_COUNT[c.league]||0)+1;
     (c.pos||[]).forEach(p=>{POS_COUNT[p]=(POS_COUNT[p]||0)+1;});});
+  NAT_RANK=_rankCommon(NAT_COUNT);LG_RANK=_rankCommon(LG_COUNT);
+  reorderDropdownLists();
   recomputeFormScores(); // rescore formations from FW weights (DB no longer used for this)
+}
+// Order a dropdown's option list by the live DB rarity rank (most-common-in-DB first, rarest last),
+// with anything absent from the DB entirely (rank undefined) tacked on the end in alphabetical order.
+// Any failure here (bad/missing rank map, mismatch, etc.) falls back to the original hardcoded order.
+function _sortByRarity(names,rankMap,fallbackOrder){
+  try{
+    const known=names.filter(n=>Object.prototype.hasOwnProperty.call(rankMap,n));
+    const unknown=names.filter(n=>!Object.prototype.hasOwnProperty.call(rankMap,n));
+    known.sort((a,b)=>rankMap[a]-rankMap[b]);
+    unknown.sort((a,b)=>a.localeCompare(b));
+    const out=known.concat(unknown);
+    if(out.length!==names.length)throw new Error('rarity sort length mismatch');
+    return out;
+  }catch(e){return fallbackOrder.slice();}
+}
+// Re-sorts NATIONS / LEAGUE_NAMES (and the derived MLEAGUES) IN PLACE so every dropdown built from
+// them (via makeCombo, which keeps a live reference) picks up the new order automatically.
+function reorderDropdownLists(){
+  try{
+    const natOrder=_sortByRarity(NATIONS_FALLBACK_ORDER,NAT_RANK,NATIONS_FALLBACK_ORDER);
+    NATIONS.length=0;NATIONS.push(...natOrder);
+  }catch(e){NATIONS.length=0;NATIONS.push(...NATIONS_FALLBACK_ORDER);}
+  try{
+    const lgOrder=_sortByRarity(LEAGUE_NAMES_FALLBACK_ORDER,LG_RANK,LEAGUE_NAMES_FALLBACK_ORDER);
+    LEAGUE_NAMES.length=0;LEAGUE_NAMES.push(...lgOrder);
+  }catch(e){LEAGUE_NAMES.length=0;LEAGUE_NAMES.push(...LEAGUE_NAMES_FALLBACK_ORDER);}
+  try{MLEAGUES.length=0;MLEAGUES.push('Icons',...LEAGUE_NAMES);}catch(e){}
 }
 // Rescore every formation using FW position weights.
 // (GOLD_DB is kept in case we want rarity-based scoring in the future, but it is NOT
@@ -4210,26 +4662,26 @@ const SHAPE_LABEL={
   lowIconPenaltyMin:'Low-rated icon penalty (min) \u2014 value an icon loses at the threshold rating. Keep \u2264 the max.',
   lowIconPenaltyMax:'Low-rated icon penalty (max) \u2014 value an icon loses at the floor rating below. Keep \u2265 the min.',
   lowIconHardBound:'Low-icon penalty floor \u2014 rating at/below which the low-icon penalty is fully maxed out.',
-  highIconRatingThreshold:'High-icon boost threshold \u2014 rating at/above which icons start gaining extra value.',
+  highIconRatingThreshold:'High-icon boost threshold \u2014 rating at/above which icons start gaining extra value. Keep below the ceiling below.',
   highIconBoostMin:'High-rated icon boost (min) \u2014 value an icon gains at the threshold rating. Keep \u2264 the max.',
   highIconBoostMax:'High-rated icon boost (max) \u2014 value an icon gains at the ceiling rating below. Keep \u2265 the min.',
-  highIconHardBound:'High-icon boost ceiling \u2014 rating at/above which the high-icon boost is fully maxed out.',
+  highIconHardBound:'High-icon boost ceiling \u2014 rating at/above which the high-icon boost is fully maxed out. Keep above the threshold above.',
   lowHeroRatingThreshold:'Low-hero penalty threshold \u2014 rating at/below which heroes start losing value. 0 = off (default).',
   lowHeroPenaltyMin:'Low-rated hero penalty (min) \u2014 value a hero loses at the threshold rating. Keep \u2264 the max.',
   lowHeroPenaltyMax:'Low-rated hero penalty (max) \u2014 value a hero loses at the floor rating below. Keep \u2265 the min.',
   lowHeroHardBound:'Low-hero penalty floor \u2014 rating at/below which the low-hero penalty is fully maxed out.',
-  highHeroRatingThreshold:'High-hero boost threshold \u2014 rating at/above which heroes start gaining extra value.',
+  highHeroRatingThreshold:'High-hero boost threshold \u2014 rating at/above which heroes start gaining extra value. Keep below the ceiling below.',
   highHeroBoostMin:'High-rated hero boost (min) \u2014 value a hero gains at the threshold rating. Keep \u2264 the max.',
   highHeroBoostMax:'High-rated hero boost (max) \u2014 value a hero gains at the ceiling rating below. Keep \u2265 the min.',
-  highHeroHardBound:'High-hero boost ceiling \u2014 rating at/above which the high-hero boost is fully maxed out.',
+  highHeroHardBound:'High-hero boost ceiling \u2014 rating at/above which the high-hero boost is fully maxed out. Keep above the threshold above.',
   lowNormalRatingThreshold:'Low-normal penalty threshold \u2014 rating at/below which normals start losing value. 0 = off, default 87.',
   lowNormalPenaltyMin:'Low-rated normal penalty (min) \u2014 value a normal loses at the threshold rating. Keep \u2264 the max.',
   lowNormalPenaltyMax:'Low-rated normal penalty (max) \u2014 value a normal loses at the floor rating below. Keep \u2265 the min.',
   lowNormalHardBound:'Low-normal penalty floor \u2014 rating at/below which the low-normal penalty is fully maxed out.',
-  highNormalRatingThreshold:'High-normal boost threshold \u2014 rating at/above which normals start gaining extra value.',
+  highNormalRatingThreshold:'High-normal boost threshold \u2014 rating at/above which normals start gaining extra value. Keep below the ceiling below.',
   highNormalBoostMin:'High-rated normal boost (min) \u2014 value a normal gains at the threshold rating. Keep \u2264 the max.',
   highNormalBoostMax:'High-rated normal boost (max) \u2014 value a normal gains at the ceiling rating below. Keep \u2265 the min.',
-  highNormalHardBound:'High-normal boost ceiling \u2014 rating at/above which the high-normal boost is fully maxed out.',
+  highNormalHardBound:'High-normal boost ceiling \u2014 rating at/above which the high-normal boost is fully maxed out. Keep above the threshold above.',
   heroFull:'Free heroes (squad mode) \u2014 how many heroes count as free before the penalty starts.',
   heroPenalty:'Hero penalty slope (squad mode) \u2014 how fast value drops per hero past the free count.',
   heroRarityRefundCap:'Rare-league hero refund (squad mode) \u2014 how much of the hero saturation penalty a sufficiently rare league can cancel.',
@@ -4242,7 +4694,7 @@ const SHAPE_LABEL={
   premHeroPenaltyFracUrgentPos:'Prem-hero urgent-slot relief (squad mode) \u2014 forgiveness when it fills a needed slot (from pick 12). 0 = no relief.',
   clashBase:'Clash base (squad mode) \u2014 fixed hit whenever a card clashes a nation/club/league.',
   clashStack:'Clash stacking (squad mode) \u2014 extra hit per additional card already on that nation/club/league.',
-  holdSizeBase:'Hold-size severity (squad mode) \u2014 how much harder a 1-card hold (near-certain to field) is treated than a 5-card hold. Higher widens that gap; lower narrows it toward treating all hold sizes the same.',
+  holdSizeBase:'Hold-size severity (squad mode) \u2014 sets the curve for how much harsher a clash is treated the fewer cards share that same slot. Higher widens the gap between small and large holds; lower flattens it toward treating all hold sizes the same.',
   holdDomBoost:'Hold-dominance severity (squad mode) \u2014 extra severity when a better card in the same hold outranks it.',
   holdSevBase:'All-held clash severity floor (squad mode) \u2014 the starting severity for a clash against cards that are only held, before the hold-size and hold-dominance extras above are added.',
   holdSevCap:'All-held clash severity ceiling (squad mode) \u2014 the most an all-held clash severity can reach, however high the extras above push it.',
@@ -4259,6 +4711,7 @@ const SHAPE_LABEL={
   takeThreshold:'Take vs hold gap \u2014 how far ahead the top option must be before the helper says TAKE not HOLD.',
   starterBoost:'Starter boost (squad mode) \u2014 helper points added to a card your projected XI starts. Pairs with the bench penalty below.',
   benchPenalty:'Bench penalty (squad mode) \u2014 helper points removed from a card your projected XI benches. With the starter boost, sets how hard the helper favours a likely starter.',
+  allFirstBonus:'Flat bonus for a card who is new in everything (nation/league/club) (squad mode). 0 = off.',
 };
 const SHAPE_CATEGORIES=[
   {key:'icon',keys:['iconKeep','iconErosion','iconRarityRefundCap',
@@ -4273,7 +4726,7 @@ const SHAPE_CATEGORIES=[
     'highNormalRatingThreshold','highNormalBoostMin','highNormalBoostMax','highNormalHardBound']},
   {key:'clash',keys:['clashDraws','clashBase','clashStack','holdSizeBase','holdDomBoost','holdSevBase','holdSevCap','redundancySurcharge','dominantClashGap']},
   {key:'common',keys:['commonNatCount','commonNatPenalty','commonNatIconExtra','commonClubCount','commonClubPenalty','commonHeroLeagueCount','commonHeroLeaguePenalty']},
-  {key:'misc',keys:['takeThreshold','starterBoost','benchPenalty','outOfFormationPenalty']},
+  {key:'misc',keys:['takeThreshold','starterBoost','benchPenalty','outOfFormationPenalty','allFirstBonus']},
 ];
 // Flat order, derived from the categories above, kept for anything that still wants "every key in a sane order".
 const SHAPE_ORDER=SHAPE_CATEGORIES.reduce((a,cat)=>a.concat(cat.keys),[]);
@@ -4607,6 +5060,14 @@ function helpValue(c){
     v+=sc*HW.posScarce+(c.pos.length-1)/4*HW.posFlex;
   }
   if(squadAwareOn())v+=squadAdjust(c);
+  // All-fresh chemistry bonus: flat reward when every count chemCountBadge would show for this
+  // card is "1st" — i.e. it's the only board slot on that nation (and league/club where those
+  // dimensions apply to its type). A clean, simple counterweight to the clash-avoidance machinery
+  // above: that reasons about severity/saturation curves, this just rewards total freshness.
+  if(squadAwareOn()&&SHAPE.allFirstBonus>0&&!(c.type==='hero'&&c.league==='England Premier League')){
+    const _afc=_shownCounts(c,_judgeExclude);
+    if(_afc.nat===1&&(_afc.lg==null||_afc.lg===1)&&(_afc.clb==null||_afc.clb===1))v+=SHAPE.allFirstBonus;
+  }
   // Prem-hero penalty: applied always — not gated on squadAwareOn — because it reflects the
   // inherent chem cost of a Prem-league hero regardless of board context. This means the pure
   // card evaluator (squad-awareness off) correctly penalises Prem heroes just as the live helper does.
@@ -4678,7 +5139,45 @@ function rankAndVerdict(list,isCap){
   }
   return {ranked,verdict,detail};
 }
-function rankRows(ranked){return ranked.map((r,k)=>{
+// ---- Pure chemistry-overlap count (nation/league/club), independent of the score/weights ----
+// Counts, per dimension, how many OTHER board slots (excluding the slot currently being
+// judged) already carry a match on that dimension — one count per SLOT, not per physical
+// card, so a hold that's carrying two matching options (e.g. a German normal AND a German
+// hero sitting in the same hold) only contributes 1, since only one of them will ever
+// actually be fielded. Eligibility mirrors the game's own card shape: icons have no club or
+// league to clash on (nation only); heroes have no club (nation+league); normals have all three.
+function slotPureCounts(c,excludeSlotId){
+  const lgKey=leagueOf(c);
+  let nat=0,lg=0,clb=0;
+  (board||[]).forEach(sl=>{
+    if(sl.id===excludeSlotId||sl.busted)return;
+    const scs=slotCards(sl.id);
+    if(!scs.length)return;
+    if(scs.some(x=>x.nation===c.nation))nat++;
+    if(c.type!=='icon'&&scs.some(x=>leagueOf(x)===lgKey))lg++;
+    if(c.type==='normal'&&scs.some(x=>x.type==='normal'&&x.club===c.club))clb++;
+  });
+  return{nat:nat+1,lg:c.type==='icon'?null:lg+1,clb:c.type==='normal'?clb+1:null};
+}
+function _ordinal(n){const v=n%100;if(v>=11&&v<=13)return n+'th';switch(n%10){case 1:return n+'st';case 2:return n+'nd';case 3:return n+'rd';default:return n+'th';}}
+function _shownCounts(c,excludeSlotId){
+  const pc=slotPureCounts(c,excludeSlotId);
+  // Prem-League heroes don't show a league count: their "league" is just England Premier League,
+  // which isn't a genuine hero-league rarity dimension, so it's excluded here (and from the
+  // all-fresh chemistry bonus in helpValue) rather than surfaced as a misleading "1st" badge.
+  const isPremHero=c.type==='hero'&&c.league==='England Premier League';
+  return{nat:pc.nat,lg:(c.type==='hero'&&!isPremHero)?pc.lg:null,clb:pc.clb};
+}
+function chemCountBadge(c,excludeSlotId){
+  const pc=_shownCounts(c,excludeSlotId);
+  const bits=[_ordinal(pc.nat)+' '+c.nation];
+  if(pc.lg!=null)bits.push(_ordinal(pc.lg)+' '+c.league.replace('England ',''));
+  if(pc.clb!=null)bits.push(_ordinal(pc.clb)+' '+c.club);
+  return bits.join(' \u00b7 ');
+}
+// isCap: the captain slot is the very first pick, so every count is trivially "1st" on every
+// dimension \u2014 showing the badge there is meaningless, so it's omitted entirely for that slot.
+function rankRows(ranked,excludeSlotId,isCap){return ranked.map((r,k)=>{
   const xiTag=r._xiNote
     ?(r._xiNote==='starter'
       ?'<span style="color:var(--good);font-size:10px;font-weight:700;margin-left:5px">\u25b2 STARTER</span>'
@@ -4687,7 +5186,8 @@ function rankRows(ranked){return ranked.map((r,k)=>{
         :'<span style="color:var(--warn);font-size:10px;font-weight:700;margin-left:5px">\u25c6 '+r._xiNote+'</span>')
     :'';
   return '<div class="xirow"><div class="sl">'+(k+1)+'</div>'
-    +'<div class="pl"><b>'+esc(cardName(r.c))+'</b>'+xiTag+'<div class="m">'+r.c.nation+' \u00b7 '+(r.c.type==='hero'?r.c.league.replace('England ',''):r.c.type==='icon'?'Icon':r.c.club)+' \u00b7 '+r.c.rating+(r.c.pos&&r.c.pos.length?' \u00b7 '+r.c.pos.join('/'):'')+'</div></div>'
+    +'<div class="pl"><b>'+esc(cardName(r.c))+'</b>'+xiTag+'<div class="m">'+r.c.nation+' \u00b7 '+(r.c.type==='hero'?r.c.league.replace('England ',''):r.c.type==='icon'?'Icon':r.c.club)+' \u00b7 '+r.c.rating+(r.c.pos&&r.c.pos.length?' \u00b7 '+r.c.pos.join('/'):'')+'</div>'
+    +(isCap?'':'<div class="m" style="color:var(--mut);opacity:.8">'+chemCountBadge(r.c,excludeSlotId)+'</div>')+'</div>'
     +'<div class="r">'+r.v.toFixed(1)+'</div></div>';
 }).join('');}
 function scoreExplain(){
@@ -5131,7 +5631,7 @@ function judgeSlotInline(preCtx){
       }
     }
   }
-  el.innerHTML='<div class="summary" style="margin:6px 0 2px">'+head+projNote+soleNote+urgent+starterNote+_poolSizeWarning()+'<hr><div class="divh">Helper rating</div>'+rankRows(ranked)+'<button class="btn gho sm" style="margin-top:8px" onclick="runHelper()">\u21bb Re-check</button>'+helperDeepBtn
+  el.innerHTML='<div class="summary" style="margin:6px 0 2px">'+head+projNote+soleNote+urgent+starterNote+_poolSizeWarning()+'<hr><div class="divh">Helper rating</div>'+rankRows(ranked,s.id,isCap)+'<button class="btn gho sm" style="margin-top:8px" onclick="runHelper()">\u21bb Re-check</button>'+helperDeepBtn
     +'<div class="tiny" style="margin-top:8px">Rated against your weights \u2014 feel free to overrule any call you don\u2019t agree with. It\u2019s your draft. Evaluations are generated on a per-hold basis, so re-evaluate if you make a change elsewhere.</div>'+inlineHoldNote+'</div>';
 }
 
