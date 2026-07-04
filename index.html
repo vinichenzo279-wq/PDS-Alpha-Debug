@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v10.0.1</title>
+<title>Draft Solver v10.0.3</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -446,8 +446,23 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                main XI's capped-search box, alongside the "Keep searching (x3)" / "Search to the
                end" escalation buttons — that's the box the warning is actually actionable from.
                The per-slot helper's own copy of the warning is unchanged.
+       v10.0.2 — The recreation log's settings snapshot/diff/format (_recSnapshot/
+               _recNoteSettingsDrift/_recFmtSettings) didn't include "Skip ties", so toggling it
+               mid-session left no trace in the log even though it changes the actual search
+               space (strict-improvement B&B instead of tie-collecting). Now captured like every
+               other solve-affecting setting: appears in "Settings at solve start" and flagged as
+               "skip ties on\u2192off" (or vice versa) if changed between logged steps.
+       v10.0.3 — Fix: with Optimal RC on, "Settings at solve start" recorded the Rating Ceiling
+               BEFORE the auto-snap to maxPossibleRating(), not the value the solve actually ran
+               at \u2014 runSolve's _proceed() logged the recreation-log snapshot (_recLog/
+               _recReset, which reads RC via getRatingCeil()) before calling _applyAutoRC(),
+               which is what moves the slider to the computed ceiling. Fixed by snapping first:
+               _applyAutoRC() now runs before the log snapshot, so the recorded RC always matches
+               the ceiling the solve used. Manual-RC mode (Optimal RC off) was never affected \u2014
+               there's no snap to race with, since getRatingCeil() just reads whatever the user
+               set.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v10.0.1</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v10.0.3</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -1192,8 +1207,8 @@ function _clearSolve(){lastSolve=null;window._solved=null;window._solveCtx=null;
    Stamped into lastSolve (settings/steps) at applyTie/emergency time, so it persists through
    save/export/restore with everything else and refreshLog can print it. */
 let _recActions=[],_recBase=null,_recCurSettings=null;
-function _recSnapshot(){return {rc:getRatingCeil(),capM:Math.round(getNodeCap()/1000000),target:_targetScore()||0,bench:_benchMode(),mgrDepth:_mgrFrac()};}
-function _recFmtSettings(s){return 'RC '+s.rc+' \u00b7 node cap '+s.capM+'M \u00b7 target '+(s.target?s.target:'off')+' \u00b7 bench speed '+s.bench+' \u00b7 mgr depth '+(typeof s.mgrDepth==='number'?s.mgrDepth.toFixed(2):s.mgrDepth);}
+function _recSnapshot(){return {rc:getRatingCeil(),capM:Math.round(getNodeCap()/1000000),target:_targetScore()||0,bench:_benchMode(),mgrDepth:_mgrFrac(),skipTies:_skipTies()};}
+function _recFmtSettings(s){return 'RC '+s.rc+' \u00b7 node cap '+s.capM+'M \u00b7 target '+(s.target?s.target:'off')+' \u00b7 bench speed '+s.bench+' \u00b7 mgr depth '+(typeof s.mgrDepth==='number'?s.mgrDepth.toFixed(2):s.mgrDepth)+' \u00b7 skip ties '+(s.skipTies?'on':'off');}
 function _recNoteSettingsDrift(){
   const cur=_recSnapshot();
   if(_recCurSettings){
@@ -1203,6 +1218,7 @@ function _recNoteSettingsDrift(){
     if(cur.target!==p.target)d.push('target '+(p.target||'off')+'\u2192'+(cur.target||'off'));
     if(cur.bench!==p.bench)d.push('bench speed '+p.bench+'\u2192'+cur.bench);
     if(cur.mgrDepth!==p.mgrDepth)d.push('mgr depth '+p.mgrDepth.toFixed(2)+'\u2192'+cur.mgrDepth.toFixed(2));
+    if(cur.skipTies!==p.skipTies)d.push('skip ties '+(p.skipTies?'on':'off')+'\u2192'+(cur.skipTies?'on':'off'));
     if(d.length)_recActions.push('settings changed: '+d.join(', '));
   }
   _recCurSettings=cur;
@@ -2844,11 +2860,15 @@ function runSolve(nodeCap,reuseSeed){runSolve.__reuse=!!reuseSeed;
     // the Solve button always calls runSolve() bare, which is what defines "from scratch" and resets
     // the step list + re-snapshots the base settings. Logged here (post-commit), so a cancelled 150M
     // warning leaves the recreation log untouched along with everything else.
+    // Auto-RC snap MUST happen before the log snapshot below — with Optimal RC on, getRatingCeil()
+    // (which the snapshot reads) only reflects the actual solve ceiling once the slider's been
+    // snapped to maxPossibleRating(); logging first recorded the pre-snap manual-slider leftover
+    // instead of the RC the solve actually ran at.
+    _applyAutoRC();
     if(nodeCap)_recLog('main solve: '+_recCapTxt(cap));else _recReset();
     _clearSolve();refreshLog();
     _showSolverOverlay();
     out.innerHTML='<div class="note" style="color:var(--mut)">\u23f3 Solving\u2026'+(cap>10000000?' (extended search \u2014 '+Math.round(cap/1000000)+'M node cap)':'')+'</div>';
-    _applyAutoRC(); // Optimal RC on -> snap the slider to the computed UB before getRatingCeil() is read below (and by the OOP path)
     setTimeout(()=>_runSolveInner(cap,getRatingCeil(),runSolve.__reuse),30);
   };
   if(cap>150000000){
