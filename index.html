@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v9.5.2.1</title>
+<title>Draft Solver v10.0</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -409,6 +409,20 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                no more "1-card hold" (holds of 1 don't exist), now describes the general curve by
                how many cards share the clashing slot; (6) versioning convention above clarified re:
                feature size vs number bumped.
+       v10.0 — "Skip ties" checkbox (default OFF), under the Rating-Ceiling slider next to the new
+               85/95/105 scale (moved up from beneath the Optimal-RC box). When ON, the branch-and-
+               bound solver switches from "explore anything that could match the best" to "explore
+               only what could BEAT it" — the prune test goes from ub<best to ub<=best, and tied
+               lineups are no longer collected. This is provably score-preserving: an admissible
+               bound never exceeds a branch's true max, so a branch holding a strictly-better XI
+               always has ub>best and is never pruned; only equal-scoring lineups are dropped. It
+               composes with Optimal RC — at the tight auto ceiling the demo goes 10,286 -> 38
+               nodes for the same score 153 (357,777 -> 38 vs the old manual RC105). Note this is
+               the sound version of "just lower RC by 1": lowering the ceiling under the optimal
+               squad's own rating can prune the optimum outright (RC93 on the demo misses 153),
+               whereas skip-ties cuts ties directly and stays correct at the true UB. Persists in
+               advanced settings. Solver/scoring untouched with the box OFF — demo fingerprint
+               still 357,777 / 153 / 3 ties.
        v9.5.2 — Small follow-ups to 9.5.1: (1) the high-rating boost threshold AND ceiling labels
                (icon/hero/normal, 6 labels total) no longer spell out "not capped at 99 — can be
                set above it" — self-evident from the default and [0,105] range now;
@@ -428,7 +442,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                just bumped, so a "v9.5.2" downloaded before this correction and one downloaded
                after are distinguishable instead of silently looking identical.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v9.5.2.1</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v10.0</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -562,12 +576,16 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
   <details class="hlp" style="margin-bottom:10px"><summary>Advanced &mdash; solver settings</summary>
     <div style="margin-top:8px">
       <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:block">Rating Ceiling &mdash; <span id="ratingCeilLabel" style="color:var(--ink);font-weight:800">96</span></label>
-      <input type="range" id="ratingCeilSlider" min="0" max="20" value="11" style="width:100%;margin:0 0 4px;accent-color:var(--cyan)" oninput="updateRatingCeilLabel()" onchange="saveAdvSettings()">
+      <input type="range" id="ratingCeilSlider" min="0" max="20" value="11" style="width:100%;margin:0 0 2px;accent-color:var(--cyan)" oninput="updateRatingCeilLabel()" onchange="saveAdvSettings()">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--mut);margin-bottom:8px"><span>85</span><span>95</span><span>105</span></div>
       <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:2px 0 6px;cursor:pointer;color:var(--ink)">
         <input type="checkbox" id="rcAutoOptimal" checked onchange="_toggleAutoRC();saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
         <span><b>Optimal RC</b> &mdash; let the solver pick the ceiling automatically</span>
       </label>
-      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--mut);margin-bottom:8px"><span>85</span><span>95</span><span>105</span></div>
+      <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:2px 0 8px;cursor:pointer;color:var(--ink)">
+        <input type="checkbox" id="skipTies" onchange="saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
+        <span><b>Skip ties</b> &mdash; stop at the best score, don&rsquo;t hunt equal-scoring lineups (much faster)</span>
+      </label>
       <p class="tiny" style="margin:0">The highest team rating the solver assumes is reachable &mdash; a <b>speed lever</b>, and the biggest one there is. With <b>Optimal RC</b> on (the default) the solver computes the exact best ceiling for your draft and sets it before every solve &mdash; no guessing, no warnings. Turn it off to drive the slider yourself: a lower ceiling searches far fewer nodes but can miss a better squad, a higher one guarantees completeness but is slower. Left on, you always get the fastest ceiling that&rsquo;s still provably optimal.</p>
       <div id="ratingCeilWarn" style="display:none;font-size:11px;padding:7px 10px;border-radius:0 7px 7px 0;margin-top:8px;background:var(--panel2);border-left:2px solid var(--warn);color:var(--warn)"></div>
       <div style="margin-top:14px">
@@ -2142,7 +2160,8 @@ function scoreXI(xi){
 }
 
 /* ============================ SOLVER (DFS + bound) ============================ */
-function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs){
+function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies){
+  const ST=!!skipTies; // "Skip ties": prune branches that can only TIE the best (strict-improvement B&B) and stop collecting tied XIs. Provably keeps the optimal SCORE (never prunes a strictly-better branch, whose admissible bound must exceed best); only tied lineups are dropped.
   const RC=ratingCeil!==undefined?ratingCeil:99;
   const slots=form.slots;
   const cand=slots.map(s=>cards.filter(c=>c.pos.includes(s))
@@ -2210,7 +2229,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs){
       const xi=pick.slice(),sc=scoreXI(xi);
       if(sc.rating>maxRating)maxRating=sc.rating;   // cheap: sc.rating already computed for the score
       if(sc.total>best){best=sc.total;const key=xi.map(c=>c.id).sort().join(',');bestXIs=[{xi,sc,foundAt:nodes,key}]}
-      else if(sc.total===best){
+      else if(!ST && sc.total===best){
         const key=xi.map(c=>c.id).sort().join(',');
         if(!bestXIs.some(b=>(b.key||(b.key=b.xi.map(c=>c.id).sort().join(',')))===key))bestXIs.push({xi,sc,foundAt:nodes,key});
       }
@@ -2255,7 +2274,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs){
       const ub=RC+33
         +seenNat.size+seenLg.size+seenClub.size+partialIcon+partialHero
         +total0+bonusGain+premUnseen;
-      if(ub<best)return;
+      if(ST?ub<=best:ub<best)return; // ST: a branch that can only reach `best` is a tie we do not need
     }
     // v5.6 dynamic in-flight presort — reorders cand[slotIdx] using the *live* path state
     // (seenNat/seenLg/seenClub/partialIcon/partialHero) instead of the static rating-only
@@ -2584,6 +2603,7 @@ function _hideSolverOverlay(){
 // RC warnings (which only exist to guide MANUAL tuning) are hidden. Off = full manual control of the
 // slider, with the warnings back. Default-on is expressed as "missing or checked" so older saved
 // states (no checkbox key) also default to auto.
+function _skipTies(){const cb=$('#skipTies');return !!(cb&&cb.checked);} // default OFF
 function _autoRCon(){const cb=$('#rcAutoOptimal');return !cb||cb.checked;}
 function _applyAutoRC(){
   if(!_autoRCon())return null;
@@ -2634,7 +2654,7 @@ function saveAdvSettings(){
   try{
     const rc=$('#ratingCeilSlider'),nc=$('#nodeCapInput'),bm=$('#benchMode'),md=$('#mgrDepth');
     const ar=$('#rcAutoOptimal');
-    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true};
+    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true, skipTies:(($('#skipTies')||{}).checked||false)};
     localStorage.setItem(_ADV_SAVE_KEY,JSON.stringify(d));
   }catch(e){}
 }
@@ -2655,7 +2675,9 @@ function saveAdvSettings(){
       const bm=$('#benchMode');if(bm)bm.value=m[0];const md=$('#mgrDepth');if(md)md.value=m[1];
     }
     if(saved.rcAuto!==undefined){const ar=$('#rcAutoOptimal');if(ar)ar.checked=!!saved.rcAuto;}
-    _updMgrDepthLbl();
+    
+    if(d.skipTies!==undefined){var _st=$('#skipTies'); if(_st)_st.checked=!!d.skipTies;}
+_updMgrDepthLbl();
   }catch(e){}
 })();
 function resetAdvSettings(){
@@ -2690,7 +2712,7 @@ function _probeFloor(form,sortedCards,ratingCeil){
   let seedBest=-1,seedXIs=null,last=-1;
   for(const st of steps){
     if(st.rc<86||st.rc>ratingCeil-3||st.rc<=last)continue;last=st.rc;
-    const pr=solveBest(form,sortedCards,st.cap,st.rc,seedBest>=0?seedBest:undefined,seedXIs);
+    const pr=solveBest(form,sortedCards,st.cap,st.rc,seedBest>=0?seedBest:undefined,seedXIs,_skipTies());
     if(pr&&!pr.error&&pr.bestXIs&&pr.bestXIs.length&&pr.best>seedBest){seedBest=pr.best;seedXIs=pr.bestXIs.slice();}
   }
   return (seedBest>=0&&seedXIs)?{seedBest,seedXIs}:null;
@@ -2856,7 +2878,8 @@ function _runSolveInner(cap,ratingCeil,reuseSeed){
     _seed={seedBest:window._solveCtx.r.best,seedXIs:window._solveCtx.r.bestXIs};
   }
   else{_seed=(cap>2000000)?_probeFloor(form,sortedCards,ratingCeil):null;}
-  const r=solveBest(form,sortedCards,cap,ratingCeil,_seed?_seed.seedBest:undefined,_seed?_seed.seedXIs:undefined),ms=Math.round(performance.now()-t0);
+  const r=solveBest(form,sortedCards,cap,ratingCeil,_seed?_seed.seedBest:undefined,_seed?_seed.seedXIs:undefined,_skipTies()),ms=Math.round(performance.now()-t0);
+  if(_skipTies()&&r&&r.bestXIs&&r.bestXIs.length>1)r.bestXIs=[r.bestXIs[0]]; // ties intentionally skipped -> show the one optimal lineup
   r.ubRating=maxPossibleRating(sortedCards,form); // search-independent upper bound on any legal squad's rating — drives the RC warning (see _rcCeilWarnHTML)
   _hideSolverOverlay();
   _handleSolveResult(r,cap,form,ms,out);
