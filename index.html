@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v10.1.0.1</title>
+<title>Draft Solver v11.0</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -390,8 +390,13 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                UB-D (transversal-matroid greedy is provably element-wise-dominating over every
                placeable set of a given size), just applied to the whole node set instead of a
                partition of it — so a hold-group can now only ever be placed, and credited, once
-               overall. Never looser than UB-D by construction; strictly tighter whenever UB-D's
-               per-component split let the same hold leak into two buckets.
+               overall. It shares UB-D's domination argument (transversal-matroid greedy is
+               provably element-wise-dominating over every placeable set of a given size), so both
+               are independently valid — but this does NOT mean UB-E dominates UB-D. UB-E still
+               credits a group at its GLOBAL best rating regardless of which position the matching
+               actually lands it at, so it can occasionally over-credit a position relative to
+               what UB-D's per-component version happened to compute honestly for that same
+               instance (see the CORRECTION below).
                —
                VERIFIED: extended fuzz_all_ubs.js with UB-E and re-ran against the brute-force
                oracle — 150,000 trials (79,566 with a legal XI to score), 0 violations for UB-E
@@ -521,8 +526,138 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                the time, so anyone who grabbed a copy before vs. after that fix was both holding
                something labeled "v10.1" with no way to tell them apart from the string alone.
                Per the 4th-number convention above, this makes the corrected copy distinguishable.
+       v10.1.0.2 — Documentation-only, no logic change: recorded why two attempted follow-ups to
+               UB-E (internally "UB-F" and "UB-G", never merged, code not in this file) both turned
+               out to be unsound, and — more importantly — WHY, so nobody re-attempts the same fix
+               later without knowing it's a dead end. See the "UB-E CANNOT BE TIGHTENED FURTHER"
+               comment above ubEGlobal()/maxPossibleRating() for the full write-up and the concrete
+               counterexample. Short version: both attempts tried to credit a hold-group's rating at
+               its actual FINAL assigned position instead of UB-E's current group-global-best
+               (position-independent) credit. Both were fuzz-tested against the brute-force oracle
+               and both undercounted the true max in real trials (UB-F: 862-876 violations per
+               ~12,000 comparable trials across two runs; UB-G, a from-scratch edge-weighted
+               matching attempt built independently of the UB-D/E lineage rather than a patch on it:
+               963 violations per 11,020). This isn't a fixable implementation bug in either one —
+               there's a concrete two-hold-group/two-position example (ratings in the app's normal
+               60\u201399 range) where the two possible real legal XIs have sorted-rating vectors
+               that don't element-wise dominate one another ([100,85] vs [95,90] type shape), so ANY
+               method that tries to guess which specific position a group's cards will end up at
+               risks locking in the wrong one and crediting less than the true max. The only credit
+               that's safe against both possibilities at once is the group's overall best rating,
+               independent of where it lands \u2014 which is exactly what UB-E already does. Also
+               checked and ruled out lex-max and raw sum-max crediting as safe alternatives (same
+               counterexample shape defeats both, with realistic in-range numbers). Conclusion: UB-E
+               is very likely at the practical ceiling for this matroid-greedy-domination technique
+               family given futRatingRaw's mean+spread-above-mean shape; further tightening would
+               need a genuinely different kind of relaxation, not a smarter matching algorithm on
+               the same one.
+       v10.3 \u2014 Added UB-H2, a SIXTH relaxation to maxPossibleRating(), and the "genuinely
+               different kind of relaxation" flagged as the honest next lead at the end of the
+               v10.1.0.2 entry above. ROLLBACK NOTE up front: this candidate is additive \u2014
+               deleting the "UB-H2:" block in maxPossibleRating() (and the ubH2Bound()/
+               spMaxBoundPerSlot()/minCostMaxFlow() helpers above it) restores exact v10.1.0.2
+               behaviour, just without the 6th candidate in the min().
+               WHY THIS AVOIDS THE UB-F/UB-G TRAP: every method through UB-E (and both failed UB-F/
+               UB-G attempts, see the "UB-E CANNOT BE TIGHTENED FURTHER" comment above
+               ubEGlobal()/maxPossibleRating()) works by building ONE N-length credited vector and
+               hoping it element-wise dominates whichever real legal XI turns out to be the true
+               winner \u2014 that comment's counterexample shows this is fragile once crediting gets
+               position-specific, because two real legal XIs can have sorted vectors that don't
+               dominate each other. UB-H2 never builds a vector at all. futRatingRaw(x) = (S+sp)/N
+               where S=sum(x), sp=spread-above-mean(x); if S_max is at least the true winner's real
+               sum and sp_max is at least the true winner's real spread \u2014 found via TWO SEPARATE,
+               independent arguments \u2014 then (S_max+sp_max)/N is at least the true futRatingRaw
+               automatically, regardless of whether S_max and sp_max come from the same hypothetical
+               vector. No domination needed, so the UB-F/UB-G counterexample doesn't apply.
+               PART 1 (S_max, exact): the max possible SUM over any real legal XI is a plain
+               weighted-matching problem (hold-group capacity 1, position-slot capacity = need),
+               solved exactly via min-cost-max-flow \u2014 unlike full futRatingRaw, a raw sum
+               genuinely is safe to sum-maximise.
+               PART 2 (sp_max, a real bound, not exact but provably safe): spread-above-mean is
+               CONVEX, so its max over a box [L_i,U_i] per slot i intersected with sum(x)<=S_max is
+               attained at a vertex of that region, and every vertex of an N-box-plus-one-hyperplane
+               region has at most one coordinate not pinned to its own bound. spMaxBoundPerSlot()
+               enumerates exactly those vertices (2^N pure + N*2^(N-1) one-flex, trivial for N<=11, a
+               starting XI's real cap) and returns the true max of sp over that relaxed region.
+               THE KEY IMPROVEMENT: L_i/U_i are PER-SLOT (best/worst rating among cards eligible for
+               THAT slot's specific position), not one global [Lmin,Umax] shared by every slot \u2014
+               a slot whose position has a narrow, low-ceiling eligible pool no longer borrows slack
+               from some other slot's wide, high-ceiling position.
+               FUZZ-TESTED at the actual problem scale (23-card pool, 5-cards-per-hold cap, 11
+               position-dependent slots across six real formations, ratings spanning the app's true
+               60\u2013104 range): 0 soundness violations across 1,100+ comparable trials in the
+               realistic-scale harness, plus 3,000 trials of the spMaxBoundPerSlot() vertex-
+               enumeration argument in isolation, plus the existing UB-A..E general-purpose harness
+               re-run clean at the corrected 60\u2013104 range. Strictly tightens the shipped
+               min(A..E) bound in ~16% of comparable trials. Timing: worst observed single call
+               ~45ms at N=11, average ~4ms \u2014 this runs once per maxPossibleRating() call, not per
+               DFS node, so the added pre-search overhead is negligible.
+               INTEGRATION: combined via min() with the existing five rather than replacing them \u2014
+               none of A-E, nor UB-H2, is proven to dominate all the others in every case, so keeping
+               all six and taking the min stays the safest way to get the tightest available bound.
+       v10.3.0.1 — Correction, documentation-only, no logic change. The v9.5.0 entry above (and two
+               inline code comments, above ubEGlobal() and above the "UB-E:" block in
+               maxPossibleRating()) claimed UB-E is "never looser than UB-D by construction." That's
+               wrong, and it was checked directly, not just re-read: fuzzed UB-D against UB-E head-
+               to-head over 89,386 trials against the brute-force oracle. Both stay individually
+               valid (0 soundness violations for either), but neither dominates the other — UB-D
+               was strictly tighter than UB-E in 1,399 trials, and UB-E was strictly tighter than
+               UB-D in 1,106. Concrete counterexample: a hold-group whose best rating (99) is
+               achievable only at one position, while its only card actually eligible at a second
+               position is worth just 89 — UB-D's per-component split happens to land on the exact
+               real numbers here (96.5, equal to the true max), while UB-E's global version credits
+               the group's unconstrained best (99) at whichever position the augmenting-path search
+               lands it on, overshooting to 99. The reasoning error: "same domination argument as
+               UB-D, applied globally" is true and does mean UB-E is individually sound, but it does
+               NOT imply UB-E's answer is always <= UB-D's answer on the same instance — that would
+               require UB-D's per-component feasible sets to always be a subset of what UB-E
+               considers optimal under IDENTICAL crediting, which they aren't, because per-component
+               crediting and global crediting can pick different groups for the same slot. Practical
+               upshot: UB-D is NOT redundant now that UB-E exists (still shipped, and still the
+               sole-tightest method in ~0.1% of general-purpose fuzz trials) — do not remove it under
+               the assumption UB-E subsumes it. All three inline claims corrected to describe what's
+               actually proven: both are valid relaxations from the same domination argument, kept
+               side by side in the min() because neither dominates the other, same as UB-A/B/C's
+               documented non-dominance. (For contrast: "UB-D never looser than UB-C" was re-checked
+               in the same run and holds with 0 counterexamples — that one's a correct proof and
+               wasn't touched.)
+               ALSO CHECKED WHILE HERE, closing out this round of upper-bound work: UB-H2 (per-slot
+               L_i/U_i) against the original UB-H prototype (single global Lmin/Umax) it grew out of,
+               fuzzed head-to-head over 89,219 trials. UB-H2 was never once looser than UB-H (0
+               counterexamples), strictly tighter in 47.50% of trials, and tied the rest (52.50%) —
+               a genuine, clean dominance, unlike the UB-D/UB-E case above. That's expected here and
+               not a coincidence: every per-slot box [L_i,U_i] is a subset of the shared box
+               [Lmin,Umax] (each slot's own eligible-card range sits inside the union over all
+               slots), both methods solve the identical exact S_max via the same real-eligibility
+               min-cost-max-flow, and restricting sp_max's feasible region while holding S_max fixed
+               can only lower (or match) the resulting bound — so UB-H2 strictly subsumes UB-H, and
+               UB-H itself was correctly never shipped as its own candidate in maxPossibleRating().
+       v11.0 — Solver candidate ORDERING changed (sort only — pruning, UB bound, scoring, seeding,
+               and traversal structure are byte-identical to v10.3.0.1). The per-slot presort is
+               still rating-desc first, but equal-rated candidates are now tie-broken by within-slot
+               nation/club rarity (0.4/natCount + 0.4/clubCount for normals; max nudge 0.8 < 1, so a
+               lower-rated card can never jump a higher-rated one — verified, 0 violations over 20k
+               random pools). Still computed once per slot before the search; zero per-node cost.
+               WHY: on searches that COMPLETE, ordering was measured to be irrelevant (150-draft
+               fuzz sweep: same optimum in 150/150, identical total node count in 149/150). But on
+               CAPPED searches over huge drafts (est. 10^8–10^12 combos at a 10M-node cap, all
+               variants run head-to-head on identical drafts), the incumbent at cutoff differs:
+               across 56 hard trials, 50 tied, and in the 6 divergences this ordering won 5 (+1 pt
+               each) vs. 1 loss (−2 pts) — ordering is a coin-flip whose weighting this shifts
+               favourably, not a guarantee.
+               TESTED AND REJECTED in the same campaign (so nobody re-treads these): per-node
+               dynamic re-sorting by live path state (the v5.6 idea v8.2 removed, re-tried up to
+               150M nodes on a verified pure-Node port of this exact solver) — never beat the static
+               version's final score anywhere, 4–25% slower, v8.2's removal stands; and eight
+               isolated single-factor tie-breaks (pos-flexibility scarce-first AND flex-first,
+               nation-only, club-only, league-only rarity, icon-first, normal-first) — all had zero
+               effect on completed searches, and the only capped divergence observed had the club/
+               league/icon-first variants losing a point. The nation+club blend is the only ordering
+               tested that ever added value. Node-port fidelity was verified bit-for-bit against
+               this file's solveBest first (15 drafts: identical best/nodes/capped, incl. a
+               2,159,462-node case exact to the last node).
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v10.1.0.1</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v11.0</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -2253,8 +2388,36 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies){
   const ST=!!skipTies; // "Skip ties": prune branches that can only TIE the best (strict-improvement B&B) and stop collecting tied XIs. Provably keeps the optimal SCORE (never prunes a strictly-better branch, whose admissible bound must exceed best); only tied lineups are dropped.
   const RC=ratingCeil!==undefined?ratingCeil:99;
   const slots=form.slots;
-  const cand=slots.map(s=>cards.filter(c=>c.pos.includes(s))
-    .sort((a,b)=>b.rating-a.rating)); // v5.1: best-first — high-rated candidates tried first so the first complete path is near-optimal, making pruning bite much earlier on capped searches
+  // v11.0 presort — rating-desc first as always (v5.1 best-first), but ties between EQUAL-rated
+  // candidates are now broken by within-slot rarity: 1/(count of this nation in this slot's own
+  // pool) + for normals 1/(count of this club in this slot's pool), weighted 0.4 each. Max nudge
+  // 0.8 < 1, ratings are integers, so a lower-rated card can NEVER be tried before a higher-rated
+  // one (verified over 20k random pools: 0 rating-order violations) — this is purely a tie-break.
+  // Rationale: an equal-rated card that's the only one of its nation/club here banks a "free"
+  // diversity point earlier, so capped searches sit on a better incumbent when cut off. Computed
+  // ONCE per slot before the search (same cost class as the old sort); ordering only — candidates,
+  // pruning, UB, and traversal structure are untouched, so any completed search returns the exact
+  // same optimum as before (verified: identical best on every fixture; total node count identical
+  // in 149/150 broad fuzz drafts). Where it earns its keep is CAPPED searches on huge drafts
+  // (est. 10^8–10^12 combos, 10M-node cap, head-to-head on identical drafts): 56 hard trials —
+  // 50 all-tied, and of the 6 divergences divstatic won 5 (+1 pt each) and lost 1 (seed 91041,
+  // −2 pts). Also tested and REJECTED in the same campaign: (a) per-node dynamic re-sorting by
+  // live path state (the removed v5.6 idea, re-tried at up to 150M nodes) — never beat this static
+  // version on final score, 4–25% slower wall-time, reconfirming the v8.2 removal; (b) eight
+  // isolated single-factor tie-breaks (position-flexibility both directions, nation/club/league
+  // rarity alone, icon-first/normal-first type priority) — zero effect on total nodes in 120
+  // broad trials each, and the only hard-trial divergence had club/league/icon-first variants
+  // LOSING a point; the nation+club BLEND is the only ordering found to add anything.
+  const cand=slots.map(s=>{
+    const list=cards.filter(c=>c.pos.includes(s));
+    const natCount={},clubCount={};
+    for(const c of list){
+      natCount[c.nation]=(natCount[c.nation]||0)+1;
+      if(c.type==='normal')clubCount[c.club]=(clubCount[c.club]||0)+1;
+    }
+    return list.map(c=>({c,k:c.rating+0.4/(natCount[c.nation]||1)+(c.type==='normal'?0.4/(clubCount[c.club]||1):0)}))
+      .sort((a,b)=>b.k-a.k).map(x=>x.c);
+  });
   if(cand.some(l=>l.length===0))
     return {error:'A slot has no eligible card: '+slots.filter((s,i)=>cand[i].length===0).join(', ')};
   // v5.5 #2: cache _lg (leagueOf) and _group on every candidate once instead of recomputing in the hot loop
@@ -3446,12 +3609,18 @@ function _miniCapWarn(which,cap,exact,nodesUsed,combosChecked,mode,unitsChecked,
 //         Same domination argument as UB-D — transversal-matroid greedy is provably element-wise-
 //         dominating over every placeable set of a given size, regardless of whether the
 //         underlying bipartite graph is one component or several — so this is a straightforward
-//         generalisation, not a new argument. Never looser than UB-D by construction (UB-D's
-//         per-component placements are always still valid placements in the unsplit global graph,
-//         so the global matroid-greedy optimum is at least as good); strictly tighter whenever
-//         UB-D's component split let the same hold leak into two buckets. Fuzz-verified: 150,000
-//         trials against the brute-force oracle, 0 violations for UB-E alone and 0 for the
-//         combined min(A,B,C,D,E); see CHANGELOG v9.5.0 for the full numbers.
+//         generalisation of the same argument, not a new one — so UB-E is independently valid, by
+//         itself. That does NOT mean UB-E dominates UB-D (CORRECTED v10.3.0.1 — see CHANGELOG for
+//         the full counterexample and numbers; this comment previously claimed otherwise). The flaw
+//         in the original reasoning: "UB-D's per-component placements are still valid placements in
+//         the unsplit global graph" is true, but UB-E doesn't credit that placement using UB-D's
+//         (component-local) weights — it credits every group at its GLOBAL best rating regardless
+//         of where the matching actually lands it, which can OVER-credit a position relative to
+//         what UB-D honestly computed for that same real instance. Matroid-greedy optimality under
+//         UB-E's own weight function only shows UB-E beats UB-D's placement scored UB-E's way — not
+//         that it beats UB-D's actual (differently-weighted) answer. Fuzz-verified head-to-head,
+//         89,386 trials: UB-D strictly tighter in 1,399, UB-E strictly tighter in 1,106 — neither
+//         dominates, so both stay in the min() on equal footing, same as UB-A/B/C's relationship.
 //         IMPORTANT — an earlier draft of UB-D instead ran a max-weight bipartite matching (min-cost
 //         flow, maximising the RAW SUM of chosen ratings) per component. That is NOT admissible and
 //         was a real bug, not just a style choice: futRatingRaw is (sum + spread-above-mean)/N, which
@@ -3539,6 +3708,77 @@ function ubDComponent(candList, positions, need){
   if(matched<K) return {feasible:false};
   return {feasible:true, chosen};
 }
+// ============================================================================================
+// UB-E CANNOT BE TIGHTENED FURTHER (documented v10.1.0.2, no logic change — this is a record of
+// two failed follow-up attempts, kept here so nobody re-tries the same fix without knowing why it
+// doesn't work). Neither attempt below is present in this file; this is a write-up of dead ends.
+//
+// THE ITCH: UB-E still credits a hold-group's contribution using its GLOBAL best rating (best
+// rating among ANY member, at ANY eligible position), regardless of which specific position the
+// matching actually assigns that group to. Concretely: hold group H has card A (rating 99,
+// eligible ONLY for GK) and card B (rating 60, eligible ONLY for RW). If the matching assigns H's
+// "slot" to RW (because some other group needed GK more), UB-E still credits 99 there, even though
+// no real card could contribute 99 at RW. Feels like obvious slack to remove.
+//
+// ATTEMPT 1 ("UB-F"): keep UB-E's exact matching/placement decisions (unchanged — proven correct
+// for FEASIBILITY), but once the matching stabilizes, credit each group at its FINAL assigned
+// position using posBest[group][thatPosition] (best rating among ONLY the members actually
+// eligible there) instead of the group's unconstrained global best.
+// ATTEMPT 2 ("UB-G"): a genuinely from-scratch construction (not a patch on the UB-D/E lineage) —
+// ground set = (hold-group, position) EDGES, each with its own honest position-specific weight, no
+// group-level union-of-positions at all; greedily take edges in descending weight order subject to
+// position capacity and one-edge-per-group.
+//
+// BOTH ARE UNSOUND. Fuzz-tested against the brute-force oracle (same harness used for UB-E's own
+// v9.5.0 verification, extended with adversarial cross-component / shared-hold / extreme-spread
+// generators): UB-F produced 862–876 violations per ~12,000 comparable trials across repeated
+// runs; UB-G produced 963 violations per 11,020. Both undercounted the true max on REAL generated
+// drafts, not just contrived inputs — this is a critical-class bug for either one, so neither was
+// merged.
+//
+// WHY, NOT JUST THAT: this isn't a bug in the implementations that a smarter version could route
+// around — position-specific (or edge-specific) crediting is fundamentally incompatible with the
+// domination guarantee this whole file relies on, given futRatingRaw's shape. Concrete
+// counterexample, using ratings in the app's normal 60-99 range:
+//   Formation needs one GK and one RW.
+//   Group 1 (one hold): card A, rating 100(*), eligible ONLY for GK. Card B, rating 90, eligible
+//     ONLY for RW.
+//   Group 2 (different hold): card C, rating 95, eligible ONLY for GK. Card D, rating 85, eligible
+//     ONLY for RW.
+//   (*ratings shown slightly outside 60-99 for round numbers; the same shape reproduces inside
+//   60-99, e.g. 99/85/94/80 — the point is the CROSSING pattern, not the exact values.)
+//   Only two real legal XIs exist: [A,D] = sorted [100,85], futRatingRaw = 96.25. Or
+//   [C,B] = sorted [95,90], futRatingRaw = 93.75.
+//   Neither sorted vector element-wise dominates the other: 100>95 but 85<90. So a method that
+//   credits group 1 at "wherever it actually lands" gets EITHER [100,?] or [?,90] depending on
+//   which position it's assigned — and if it happens to land group 1 at RW (crediting 90) while the
+//   TRUE best actually needed group 1 at GK (crediting 100) and group 2 filling RW with D (85), the
+//   position-specific method has no way to recover the 100 it left on the table: it only tracked
+//   "group 1's value at RW", never "group 1's value at GK", because it discarded the global best in
+//   favour of the position-specific one. Concretely this is where UB-F/UB-G's undercounts come
+//   from: they lock in a value tied to a placement decision that turned out to be the wrong one to
+//   have committed to, for THIS instance's actual numbers.
+//   The only credit that's safe regardless of which of the two real XIs is the "true" one is the
+//   group's UNCONSTRAINED best rating (100 for group 1, 95 for group 2) — i.e. exactly UB-E's
+//   existing rule. Crediting anything tighter is, in the general case, a bet on which position a
+//   group's best card will end up needing, and futRatingRaw's mean+spread-above-mean shape (which
+//   over-weights the top value relative to a plain average, same reason raw sum-maximisation was
+//   already rejected for UB-D — see the long comment above maxPossibleRating()) means that bet can
+//   lose in either direction depending on the specific numbers involved. Also checked lexicographic-
+//   max crediting (favour whichever real option has the single highest top value) as a possible
+//   safe alternative — it isn't: [99,60] is lexicographically greater than [98,98] (99>98) but
+//   scores LOWER under futRatingRaw (89.25 vs 98), so "pick the lex-greater option" is not a safe
+//   proxy for "pick the futRatingRaw-greater option" either.
+//
+// CONCLUSION: UB-E is very likely at the practical ceiling for the matroid-greedy-domination
+// technique this whole file uses, given futRatingRaw's specific scoring shape. Getting tighter than
+// this would need a genuinely different kind of relaxation (e.g. bounding the mean and the
+// spread-above-mean terms separately, rather than building one credited N-length vector and hoping
+// it dominates) — not a smarter matching/weighting scheme layered on the same one. Not attempted
+// here; flagging as the honest next lead if this is ever revisited, not a recommendation to build
+// it blindly — anything new in this space still needs the same brute-force fuzz gauntlet before it
+// goes near maxPossibleRating().
+// ============================================================================================
 // UB-E helper (added v9.5.0, safe to delete along with the "UB-E:" block in maxPossibleRating()
 // if this method is ever found to be wrong — UB-A/B/C/D do not depend on it): identical algorithm
 // to ubDComponent() (matroid-greedy + Kuhn's-algorithm augmenting-path placement), but run as ONE
@@ -3595,6 +3835,171 @@ function ubEGlobal(elig, slots, need){
   }
   if(matched<N) return {feasible:false};
   return {feasible:true, chosen};
+}
+// UB-H2 helper 1/3 (added v10.3, safe to delete along with the "UB-H2:" block in
+// maxPossibleRating() below if this method is ever found to be wrong -- UB-A/B/C/D/E do not depend
+// on it): plain min-cost-max-flow over a small layered graph (SOURCE -> hold-groups -> positions ->
+// SINK), used to find the EXACT maximum possible SUM of ratings over any real legal XI. This is a
+// different objective from every UB-A..E matching (which chase futRatingRaw's mean+spread shape via
+// domination) -- raw sum has no domination trap, so solving it exactly here is safe. Bellman-Ford
+// shortest-path augmentation; the graph is small (hold-groups + positions + 2), so this is fast.
+function minCostMaxFlow(numNodes, source, sink, edges, targetFlow){
+  const graph = Array.from({length:numNodes}, ()=>[]);
+  const edgeList = [];
+  function addEdge(u,v,cap,cost){
+    edgeList.push({u,v,cap,cost,flow:0});
+    edgeList.push({u:v,v:u,cap:0,cost:-cost,flow:0});
+    graph[u].push(edgeList.length-2);
+    graph[v].push(edgeList.length-1);
+  }
+  for(const e of edges) addEdge(e.u,e.v,e.cap,e.cost);
+
+  let totalFlow=0, totalCost=0;
+  while(totalFlow<targetFlow){
+    const dist = new Array(numNodes).fill(Infinity);
+    const inQueue = new Array(numNodes).fill(false);
+    const prevEdge = new Array(numNodes).fill(-1);
+    dist[source]=0;
+    const queue=[source]; inQueue[source]=true;
+    let head=0, iterations=0;
+    const maxIter = numNodes*numNodes*4+50;
+    while(head<queue.length && iterations<maxIter){
+      iterations++;
+      const u=queue[head++]; inQueue[u]=false;
+      for(const ei of graph[u]){
+        const e=edgeList[ei];
+        if(e.cap-e.flow<=0) continue;
+        if(dist[u]+e.cost < dist[e.v]-1e-9){
+          dist[e.v]=dist[u]+e.cost;
+          prevEdge[e.v]=ei;
+          if(!inQueue[e.v]){ queue.push(e.v); inQueue[e.v]=true; }
+        }
+      }
+    }
+    if(dist[sink]===Infinity) break; // no more augmenting paths
+    let bottleneck=targetFlow-totalFlow;
+    let v=sink;
+    while(v!==source){
+      const ei=prevEdge[v];
+      const e=edgeList[ei];
+      bottleneck=Math.min(bottleneck, e.cap-e.flow);
+      v=e.u;
+    }
+    v=sink;
+    while(v!==source){
+      const ei=prevEdge[v];
+      edgeList[ei].flow+=bottleneck;
+      edgeList[ei^1].flow-=bottleneck;
+      totalCost += edgeList[ei].cost*bottleneck;
+      v=edgeList[ei].u;
+    }
+    totalFlow+=bottleneck;
+  }
+  return {flow:totalFlow, cost:totalCost};
+}
+
+// UB-H2 helper 2/3 (added v10.3): exact max of sp(x)=sum(max(0,x_i-mean(x))) over
+// {L_i<=x_i<=U_i for each i} intersected with {sum(x)<=Smax}. sp is convex, so its max over this
+// bounded box-plus-one-hyperplane region is attained at a vertex, and every such vertex has at
+// most one coordinate not pinned to its own L_i/U_i bound. Enumerates both vertex families (pure
+// box vertices, and one-flex-coordinate vertices forced by the sum constraint) and returns the
+// best feasible one -- this is an EXACT computation of the max over the relaxed region, not a
+// further relaxation. See the v10.3 CHANGELOG entry for the full soundness argument.
+function spMaxBoundPerSlot(bounds, Smax){
+  const N = bounds.length;
+  const EPS = 1e-9;
+  function spOf(vals){
+    const S=vals.reduce((a,b)=>a+b,0), A=S/vals.length;
+    let sp=0; for(const v of vals) if(v>A) sp+=v-A;
+    return sp;
+  }
+  let best = -Infinity;
+
+  const total = 1<<N;
+  for(let mask=0; mask<total; mask++){
+    const vals = new Array(N);
+    let s = 0;
+    for(let i=0;i<N;i++){
+      const v = (mask & (1<<i)) ? bounds[i].U : bounds[i].L;
+      vals[i] = v; s += v;
+    }
+    if(s <= Smax + EPS){
+      const sp = spOf(vals);
+      if(sp > best) best = sp;
+    }
+  }
+
+  for(let flex=0; flex<N; flex++){
+    const others = [];
+    for(let i=0;i<N;i++) if(i!==flex) others.push(i);
+    const M = others.length;
+    const subTotal = 1<<M;
+    for(let mask=0; mask<subTotal; mask++){
+      const vals = new Array(N);
+      let sumOthers = 0;
+      for(let k=0;k<M;k++){
+        const i = others[k];
+        const v = (mask & (1<<k)) ? bounds[i].U : bounds[i].L;
+        vals[i] = v; sumOthers += v;
+      }
+      let v = Smax - sumOthers;
+      if(v < bounds[flex].L) v = bounds[flex].L;
+      if(v > bounds[flex].U) v = bounds[flex].U;
+      vals[flex] = v;
+      const sp = spOf(vals);
+      if(sp > best) best = sp;
+    }
+  }
+  return best;
+}
+
+// UB-H2 helper 3/3 (added v10.3, safe to delete along with the "UB-H2:" block in
+// maxPossibleRating() below if this method is ever found to be wrong): computes S_max (exact, via
+// minCostMaxFlow) and sp_max (via spMaxBoundPerSlot, using PER-SLOT [L,U] -- best/worst rating
+// among cards eligible for each individual slot's own position, not one global range shared by
+// every slot) and returns (S_max+sp_max)/N, a valid upper bound on futRatingRaw for any real legal
+// XI. Returns null if no legal XI exists (consistent with UB-A..E's own opt-out convention).
+function ubH2Bound(elig, slots, need){
+  const N = slots.length;
+  const positions = Object.keys(need);
+  const groupOf = c=>c.hold||('C'+c.id);
+
+  const posBest={};
+  const posLmin={}, posUmax={};
+  for(const c of elig){
+    const g=groupOf(c);
+    if(!posBest[g]) posBest[g]={};
+    for(const p of c.pos){
+      if(need[p]!==undefined){
+        if(posBest[g][p]===undefined || c.rating>posBest[g][p]) posBest[g][p]=c.rating;
+        if(posLmin[p]===undefined || c.rating<posLmin[p]) posLmin[p]=c.rating;
+        if(posUmax[p]===undefined || c.rating>posUmax[p]) posUmax[p]=c.rating;
+      }
+    }
+  }
+  const groupIds=Object.keys(posBest);
+
+  const G=groupIds.length, P=positions.length;
+  const SOURCE=0, groupBase=1, posBase=1+G, SINK=1+G+P;
+  const numNodes=SINK+1;
+  const edges=[];
+  for(let gi=0; gi<G; gi++) edges.push({u:SOURCE, v:groupBase+gi, cap:1, cost:0});
+  for(let gi=0; gi<G; gi++){
+    const g=groupIds[gi];
+    for(let pi=0; pi<P; pi++){
+      const p=positions[pi];
+      if(posBest[g][p]!==undefined) edges.push({u:groupBase+gi, v:posBase+pi, cap:1, cost:-posBest[g][p]});
+    }
+  }
+  for(let pi=0; pi<P; pi++) edges.push({u:posBase+pi, v:SINK, cap:need[positions[pi]], cost:0});
+
+  const {flow, cost} = minCostMaxFlow(numNodes, SOURCE, SINK, edges, N);
+  if(flow<N) return null;
+
+  const Smax = -cost;
+  const bounds = slots.map(p => ({L: posLmin[p], U: posUmax[p]}));
+  const spMax = spMaxBoundPerSlot(bounds, Smax);
+  return (Smax + spMax)/N;
 }
 function maxPossibleRating(pool,form){
   if(!pool||!pool.length||!form)return null;
@@ -3683,12 +4088,24 @@ function maxPossibleRating(pool,form){
   // UB-E: same matroid-greedy + augmenting-path placement as UB-D, but as ONE global problem over
   // every eligible position in the formation instead of splitting into components first — a
   // hold-group can only be placed (and credited) once overall, closing UB-D's narrower "once per
-  // component" leak. Never looser than UB-D by construction. See ubEGlobal() and the long "UB-E"
-  // comment above this function for the full argument.
+  // component" leak. Independently valid, but does NOT dominate UB-D (corrected v10.3.0.1 — neither
+  // method dominates the other; kept side by side in the min() on equal footing). See ubEGlobal()
+  // and the long "UB-E" comment above this function for the full argument and counterexample.
   {
     const need={};for(const s of slots)need[s]=(need[s]||0)+1;
     const result=ubEGlobal(elig, slots, need);
     if(result.feasible && result.chosen.length===N)ubs.push(futRatingRaw(result.chosen));
+  }
+  // UB-H2: a genuinely different relaxation from A-E's matroid-greedy-domination family (see the
+  // v10.3 CHANGELOG entry and the "UB-H2 helper" comments above ubH2Bound() for the full
+  // soundness argument) — bounds futRatingRaw's sum and spread-above-mean terms SEPARATELY
+  // instead of building one credited vector and hoping it dominates the true winner, so it isn't
+  // subject to the UB-F/UB-G counterexample. Never proven to dominate A-E in every case (or vice
+  // versa), so it's combined via min() rather than replacing them.
+  {
+    const need={};for(const s of slots)need[s]=(need[s]||0)+1;
+    const h2=ubH2Bound(elig, slots, need);
+    if(h2!==null)ubs.push(h2);
   }
   if(!ubs.length)return null;
   return Math.floor(Math.min(...ubs)); // min of valid upper bounds is still valid, and tightest
