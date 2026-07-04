@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v11.0</title>
+<title>Draft Solver v11.1.0</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -656,8 +656,18 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                tested that ever added value. Node-port fidelity was verified bit-for-bit against
                this file's solveBest first (15 drafts: identical best/nodes/capped, incl. a
                2,159,462-node case exact to the last node).
+       v11.1.0 — Bench Node Cap and Manager Node Cap exposed as their own fields in Advanced solver
+               settings (bench section and manager section respectively), both defaulting to 3M —
+               matching the _benchCap/_mgrCap values that were hardcoded before this, so behaviour
+               is unchanged unless a user opts in. Wired into every place those caps get set or
+               reset: fresh-solve start (_clearSolve), per-tie re-analysis (_reanalyzeTie's base +
+               its 'reset' branch, and _reanalyzeBenchBtn's threshold/label), and the standalone
+               "pick best manager" panel button. Persisted via the existing saveAdvSettings/
+               restoreAdvSettings/resetAdvSettings pattern, and added to the solve-start settings
+               snapshot (_recSnapshot/_recFmtSettings/_recNoteSettingsDrift) alongside the existing
+               node cap so the recreation log stays complete.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v11.0</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v11.1.0</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -822,9 +832,19 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           <option value="slow">Very Slow &mdash; fully exhaustive (not recommended)</option>
         </select>
         <p class="tiny" style="margin:4px 0 0">Controls only how hard the <b>bench picks</b> are searched &mdash; it never changes your starting XI (the <b>Rating Ceiling</b> above is the XI lever). Higher tiers add confidence, rarely a different answer. <b>Very Slow</b> can be extremely slow on complex drafts for little benefit.</p>
+        <div style="margin-top:10px">
+          <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Bench Node Cap (millions)</label>
+          <input type="number" id="benchNodeCapInput" min="1" value="3" inputmode="numeric" style="width:100%" onblur="clampNodeCap(this);saveAdvSettings()">
+          <p class="tiny" style="margin:4px 0 0">Per-tie search budget for bench picks, before the solver reports a capped result and offers to keep searching. Default 3M.</p>
+        </div>
         <label class="tiny" style="display:block;margin-top:10px">Manager depth &mdash; ties given true +2/+1 analysis: <b id="mgrDepthLbl">0%</b></label>
         <input type="range" id="mgrDepth" min="0" max="1" step="0.05" value="0" style="width:100%" oninput="_updMgrDepthLbl()" onchange="saveAdvSettings();_solveCache=null;">
         <p class="tiny" style="margin:4px 0 0">0 = no tie analysis, 1 = check all ties; in between scales how many are checked.</p>
+        <div style="margin-top:10px">
+          <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Manager Node Cap (millions)</label>
+          <input type="number" id="mgrNodeCapInput" min="1" value="3" inputmode="numeric" style="width:100%" onblur="clampNodeCap(this);saveAdvSettings()">
+          <p class="tiny" style="margin:4px 0 0">Per-tie search budget for manager (+2/+1) analysis, before the solver reports a capped result and offers to keep searching. Default 3M.</p>
+        </div>
       </div>
       <button class="btn gho sm" style="margin-top:14px" onclick="resetAdvSettings()">&#8635; Reset solver settings to defaults</button>
 
@@ -1350,7 +1370,7 @@ const GOLD_DB=[
 let cards=[],managers=[],helpCards=[],chosenForm=null,uid=1,lastSolve=null,playerDB=[];
 let editingHelpIdx=null; // null = adding new; number = editing existing helpCard index
 let board=null,activeSlot=null,editingId=null,editingMgrIdx=null,_formChanged=false;
-let _benchCap=3000000,_mgrCap=3000000; // bench / manager-awareness mini-solve caps (should never actually bind) // 23-slot board model (Phase 2)
+let _benchCap=3000000,_mgrCap=3000000; // bench / manager-awareness mini-solve caps (should never actually bind); this initial value is only a placeholder — _clearSolve() re-derives the real value from Advanced solver settings (getBenchNodeCap/getMgrNodeCap) before every actual solve. Can't call those getters here directly: they use the $ helper, which is declared with const further down the script and is still in its temporal dead zone at this point — calling it here throws and kills the rest of the script. // 23-slot board model (Phase 2)
 let _swapMode=false,_swapPick=[]; // slot-swap state
 let _compareMode=false,_compareList=[]; // formation compare mode
 let _judgeExclude=null,_forceSquad=false; // inline helper: exclude the slot being judged, force squad-awareness
@@ -1395,7 +1415,7 @@ document.querySelectorAll('.tabbar button').forEach(b=>b.onclick=()=>{
   b.classList.add('on');document.getElementById(b.dataset.v).classList.add('on');
 });
 function _goView(v){const b=document.querySelector('.tabbar button[data-v="'+v+'"]');if(b)b.click();}
-function _clearSolve(){lastSolve=null;window._solved=null;window._solveCtx=null;window._bench=null;_benchCap=3000000;_mgrCap=3000000;const a=$('#solveOut');if(a)a.innerHTML='';const b=$('#mgrOut');if(b)b.innerHTML='';}
+function _clearSolve(){lastSolve=null;window._solved=null;window._solveCtx=null;window._bench=null;_benchCap=getBenchNodeCap();_mgrCap=getMgrNodeCap();const a=$('#solveOut');if(a)a.innerHTML='';const b=$('#mgrOut');if(b)b.innerHTML='';}
 /* ==== Solve recreation log ====
    Records, per solve session, everything needed to re-run the EXACT conditions that produced the
    result in the log: (a) a snapshot of every solver-relevant setting at the moment the fresh solve
@@ -1410,14 +1430,16 @@ function _clearSolve(){lastSolve=null;window._solved=null;window._solveCtx=null;
    Stamped into lastSolve (settings/steps) at applyTie/emergency time, so it persists through
    save/export/restore with everything else and refreshLog can print it. */
 let _recActions=[],_recBase=null,_recCurSettings=null;
-function _recSnapshot(){return {rc:getRatingCeil(),capM:Math.round(getNodeCap()/1000000),target:_targetScore()||0,bench:_benchMode(),mgrDepth:_mgrFrac(),skipTies:_skipTies()};}
-function _recFmtSettings(s){return 'RC '+s.rc+' \u00b7 node cap '+s.capM+'M \u00b7 target '+(s.target?s.target:'off')+' \u00b7 bench speed '+s.bench+' \u00b7 mgr depth '+(typeof s.mgrDepth==='number'?s.mgrDepth.toFixed(2):s.mgrDepth)+' \u00b7 skip ties '+(s.skipTies?'on':'off');}
+function _recSnapshot(){return {rc:getRatingCeil(),capM:Math.round(getNodeCap()/1000000),benchCapM:Math.round(getBenchNodeCap()/1000000),mgrCapM:Math.round(getMgrNodeCap()/1000000),target:_targetScore()||0,bench:_benchMode(),mgrDepth:_mgrFrac(),skipTies:_skipTies()};}
+function _recFmtSettings(s){return 'RC '+s.rc+' \u00b7 node cap '+s.capM+'M \u00b7 bench cap '+s.benchCapM+'M \u00b7 mgr cap '+s.mgrCapM+'M \u00b7 target '+(s.target?s.target:'off')+' \u00b7 bench speed '+s.bench+' \u00b7 mgr depth '+(typeof s.mgrDepth==='number'?s.mgrDepth.toFixed(2):s.mgrDepth)+' \u00b7 skip ties '+(s.skipTies?'on':'off');}
 function _recNoteSettingsDrift(){
   const cur=_recSnapshot();
   if(_recCurSettings){
     const p=_recCurSettings,d=[];
     if(cur.rc!==p.rc)d.push('RC '+p.rc+'\u2192'+cur.rc);
     if(cur.capM!==p.capM)d.push('node cap '+p.capM+'M\u2192'+cur.capM+'M');
+    if(cur.benchCapM!==p.benchCapM)d.push('bench cap '+p.benchCapM+'M\u2192'+cur.benchCapM+'M');
+    if(cur.mgrCapM!==p.mgrCapM)d.push('mgr cap '+p.mgrCapM+'M\u2192'+cur.mgrCapM+'M');
     if(cur.target!==p.target)d.push('target '+(p.target||'off')+'\u2192'+(cur.target||'off'));
     if(cur.bench!==p.bench)d.push('bench speed '+p.bench+'\u2192'+cur.bench);
     if(cur.mgrDepth!==p.mgrDepth)d.push('mgr depth '+p.mgrDepth.toFixed(2)+'\u2192'+cur.mgrDepth.toFixed(2));
@@ -2897,6 +2919,11 @@ function updateRatingCeilLabel(){
 function clampNodeCap(el){let v=parseInt(el.value,10);if(isNaN(v)||v<1)el.value=1;}
 function getNodeCap(){const el=$('#nodeCapInput');if(!el)return 10000000;const v=parseInt(el.value,10);return(isNaN(v)||v<1)?10000000:v*1000000;}
 function getHelperCap(){return 3000000;}
+// Bench / manager mini-solve caps, exposed in Advanced solver settings (Bench/Manager Node Cap
+// fields). Same fallback pattern as getNodeCap(): missing/invalid input -> 3M, matching the
+// hardcoded default this replaces, so existing behaviour is unchanged unless the user opts in.
+function getBenchNodeCap(){const el=$('#benchNodeCapInput');if(!el)return 3000000;const v=parseInt(el.value,10);return(isNaN(v)||v<1)?3000000:v*1000000;}
+function getMgrNodeCap(){const el=$('#mgrNodeCapInput');if(!el)return 3000000;const v=parseInt(el.value,10);return(isNaN(v)||v<1)?3000000:v*1000000;}
 // Advanced solver settings persistence (rating ceiling + node cap). Same pattern as saveHW/restoreHW:
 // save on every change, restore on load. Unlike HW these two live directly as hardcoded <input> values
 // in the markup rather than a JS object rendered into the DOM, so restore sets .value on the elements
@@ -2906,7 +2933,8 @@ function saveAdvSettings(){
   try{
     const rc=$('#ratingCeilSlider'),nc=$('#nodeCapInput'),bm=$('#benchMode'),md=$('#mgrDepth');
     const ar=$('#rcAutoOptimal');
-    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true, skipTies:(($('#skipTies')||{}).checked||false)};
+    const bnc=$('#benchNodeCapInput'),mnc=$('#mgrNodeCapInput');
+    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true, skipTies:(($('#skipTies')||{}).checked||false),benchNodeCap:bnc?bnc.value:undefined,mgrNodeCap:mnc?mnc.value:undefined};
     localStorage.setItem(_ADV_SAVE_KEY,JSON.stringify(d));
   }catch(e){}
 }
@@ -2919,6 +2947,8 @@ function saveAdvSettings(){
     // sync the label/warning text without an extra call.
     if(saved.ratingCeil!==undefined){const rc=$('#ratingCeilSlider');if(rc)rc.value=saved.ratingCeil;}
     if(saved.nodeCap!==undefined){const nc=$('#nodeCapInput');if(nc)nc.value=saved.nodeCap;}
+    if(saved.benchNodeCap!==undefined){const bnc=$('#benchNodeCapInput');if(bnc)bnc.value=saved.benchNodeCap;}
+    if(saved.mgrNodeCap!==undefined){const mnc=$('#mgrNodeCapInput');if(mnc)mnc.value=saved.mgrNodeCap;}
     if(saved.benchMode!==undefined){const bm=$('#benchMode');if(bm)bm.value=saved.benchMode;}
     if(saved.mgrDepth!==undefined){const md=$('#mgrDepth');if(md)md.value=saved.mgrDepth;}
     else if(saved.speedMode!==undefined){ // migrate the old combined tier to the two new controls
@@ -2935,6 +2965,8 @@ _updMgrDepthLbl();
 function resetAdvSettings(){
   const rc=$('#ratingCeilSlider');if(rc)rc.value=21;   // 96
   const nc=$('#nodeCapInput');if(nc)nc.value=5;        // 5M
+  const bnc=$('#benchNodeCapInput');if(bnc)bnc.value=3; // 3M
+  const mnc=$('#mgrNodeCapInput');if(mnc)mnc.value=3;   // 3M
   const bm=$('#benchMode');if(bm)bm.value='vfast';     // Very Fast bench
   const md=$('#mgrDepth');if(md)md.value='0';_updMgrDepthLbl(); // manager depth 0% default
   const ts=$('#targetScore');if(ts)ts.value='';        // target off
@@ -3296,8 +3328,7 @@ function _reanalyze(which,cap){
 }
 // Re-analyse ONLY the currently-viewed tie's bench (and its manager depth), e.g. for a tie the
 // auto-pass skipped, or just to double-check one XI.
-// This has its OWN cap pair, kept per-tie on ctx.tieCaps[idx]={bench,mgr}, starting at the same 3M
-// base as everything else. It is NOT the same object as the shared _benchCap/_mgrCap that govern the
+// This has its OWN cap pair, kept per-tie on ctx.tieCaps[idx]={bench,mgr}, starting at the same bench/manager node-cap base as everything else (Advanced solver settings, default 3M). It is NOT the same object as the shared _benchCap/_mgrCap that govern the
 // aggregate "Bench" / "Managers" panel searches — those keep whatever the user escalated them to via
 // their own "keep searching" buttons, untouched by anything that happens here. That shared pair is
 // swapped in only for the duration of computeBenchPicks/analyzeManagerDepth (which read it as a
@@ -3305,16 +3336,16 @@ function _reanalyze(which,cap){
 // far past the bench/manager options as it needs to without ever permanently overwriting them, and
 // without needing to go through the bench/manager options first.
 // escalate: undefined/falsy = normal run at whatever this tie's own cap already is (the ghost button
-//             uses this after 'reset' has just put it back at the 3M base).
+//             uses this after 'reset' has just put it back at the configured base).
 //           true    = 3x whichever of this tie's own bench/mgr caps actually capped last time.
 //           'forever' = jump both of this tie's own caps straight to "search to the end".
-//           'reset' = put this tie's own caps back to the 3M base (does not touch other ties' caps).
+//           'reset' = put this tie's own caps back to the configured base (does not touch other ties' caps).
 function _reanalyzeTie(escalate){
   const ctx=window._solveCtx;if(!ctx||!ctx.ties)return;const cur=ctx.cur,mode=_benchMode();
   ctx.tieCaps=ctx.tieCaps||{};
-  const tc=ctx.tieCaps[cur]=ctx.tieCaps[cur]||{bench:3000000,mgr:3000000};
+  const tc=ctx.tieCaps[cur]=ctx.tieCaps[cur]||{bench:getBenchNodeCap(),mgr:getMgrNodeCap()};
   const prevBd=ctx.benchData&&ctx.benchData[cur],prevAn=ctx.analyses&&ctx.analyses[cur];
-  if(escalate==='reset'){tc.bench=3000000;tc.mgr=3000000;}
+  if(escalate==='reset'){tc.bench=getBenchNodeCap();tc.mgr=getMgrNodeCap();}
   else if(escalate==='forever'){tc.bench=1e12;tc.mgr=1e12;}
   else if(escalate===true){
     if(prevBd&&prevBd.capped)tc.bench*=3;
@@ -3322,7 +3353,7 @@ function _reanalyzeTie(escalate){
   }
   const _run=()=>{
     _recLog('re-analyse tie '+(cur+1)
-      +(escalate==='reset'?' (caps reset to 3M)'
+      +(escalate==='reset'?' (caps reset to '+(getBenchNodeCap()/1000000)+'M bench / '+(getMgrNodeCap()/1000000)+'M mgr)'
         :escalate==='forever'?' (search to the end)'
         :' (bench cap '+(tc.bench>=1e12?'end':(tc.bench/1000000)+'M')+', mgr cap '+(tc.mgr>=1e12?'end':(tc.mgr/1000000)+'M')+')')
       +' \u00b7 bench speed '+mode); // logged inside _run so a cancelled 150M forever-warning records nothing
@@ -3477,13 +3508,14 @@ function _tieCapWarn(cap,benchCombos,mgrExact,benchNodes,benchCombosChecked,benc
 function _reanalyzeBenchBtn(){
   // Re-run THIS tie at whatever cap it was last escalated to (persisted on ctx.tieCaps[cur]) — no arg
   // means "run at this tie's own current cap", so switching away and back keeps the 27M you paid for
-  // instead of silently dropping to 3M. Reset is a separate, explicit choice, only shown once this tie
-  // has actually been pushed past the 3M base. Per-tie caps never touch each other or the shared panel caps.
+  // instead of silently dropping to the configured base. Reset is a separate, explicit choice, only shown once this tie
+  // has actually been pushed past that base. Per-tie caps never touch each other or the shared panel caps.
   const ctx=window._solveCtx,cur=ctx&&ctx.cur,tc=ctx&&ctx.tieCaps&&ctx.tieCaps[cur];
-  const cap=tc?Math.max(tc.bench||0,tc.mgr||0):3000000;
-  const capTxt=cap>=1e12?' (to the end)':cap>3000000?' ('+(cap/1000000)+'M)':'';
+  const base=Math.max(getBenchNodeCap(),getMgrNodeCap());
+  const cap=tc?Math.max(tc.bench||0,tc.mgr||0):base;
+  const capTxt=cap>=1e12?' (to the end)':cap>base?' ('+(cap/1000000)+'M)':'';
   let html='<button class="btn gho sm" style="margin-top:8px;width:auto" onclick="_reanalyzeTie()">\u21bb Re-analyse this bench'+capTxt+'</button>';
-  if(cap>3000000)html+=' <button class="btn gho sm" style="margin-top:8px;width:auto" onclick="_reanalyzeTie(\'reset\')">\u21ba Reset to 3M</button>';
+  if(cap>base)html+=' <button class="btn gho sm" style="margin-top:8px;width:auto" onclick="_reanalyzeTie(\'reset\')">\u21ba Reset to '+(base/1000000)+'M</button>';
   return html+'<div id="tieReBenchWarn"></div>';
 }
 function _miniCapWarn(which,cap,exact,nodesUsed,combosChecked,mode,unitsChecked,unitsTotal,proofCeil,agg){
@@ -4738,8 +4770,8 @@ function mgrGain(set,m){return (set.nationSet.has(m.nation)?0:1)+(set.leagueSet.
 function pickMgr(cap){
   if(!window._solved){$('#mgrOut').innerHTML='<div class="note">Solve the XI first.</div>';return}
   if(!managers.length){$('#mgrOut').innerHTML='<div class="note">Add at least one manager option.</div>';return}
-  _recLog(cap?'pick best manager: '+_recCapTxt(cap):'pick best manager (3M)'); // an explicit cap only comes from this panel's own keep-searching / search-to-the-end buttons
-  cap=cap||3000000;
+  _recLog(cap?'pick best manager: '+_recCapTxt(cap):'pick best manager ('+(getMgrNodeCap()/1000000)+'M)'); // an explicit cap only comes from this panel's own keep-searching / search-to-the-end buttons
+  cap=cap||getMgrNodeCap();
   // Show the same "solving..." UI the main solver uses, and defer the heavy work a tick so the
   // browser gets a chance to paint it first — otherwise (esp. on "Keep searching"/"Search to the
   // end", which can run well past the initial 3M-node cap) the tab just looks frozen with no feedback.
