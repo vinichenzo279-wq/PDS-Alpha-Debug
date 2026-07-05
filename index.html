@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v14.0 beta</title>
+<title>Draft Solver v14.1 beta</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -1313,6 +1313,32 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           run is plain divstatic). Summary line reports "parallel xN (beta)"; recreation log records
           engagement. Settings: #parBeta persisted via saveAdvSettings, reset -> on.
   -->
+  <!-- v14.1 (BETA) — three follow-ups to v14.0's parallel search, worker-path only:
+       1) STOP BUTTON. Only possible now that the DFS runs off-thread: a synchronous solveBest()
+          call can't be interrupted from a click handler (no yield point), which is why every prior
+          stop attempt on the serial path failed — this doesn't touch the serial path at all. A
+          #solverStopBtn sits inside #solverBadge (pointer-events:auto on an otherwise
+          pointer-events:none badge, same "separate layers so button is tappable" idea the overlay
+          comment already described) and only shows during a parallel run. Click ->
+          _stopParallelSolve(): terminates every worker immediately, revokes the blob URL, and
+          banks whichever workers had already posted a result, reporting the best of those as an
+          unproven "stopped early" result (or "no result yet" if none had finished). A _parRun
+          token guards against a stray onmessage racing the terminate.
+       2) WORKER-COUNT SLIDER. Replaces v14.0's hardcoded min(4, cores-1) with a user-set value,
+          range 2-64 (#parWorkers), default 4. Clamped at use by root-candidate count same as
+          before (a worker with no root cards is wasted). No change to the partition/merge logic —
+          it was already Array.from({length:W}) generic in W.
+       3) RECREATION LOG. #parBeta and #parWorkers were missing from _recSnapshot/_recFmtSettings/
+          _recNoteSettingsDrift — same gap v10.0.2 fixed for skip-ties. Added alongside the existing
+          diversity fields; format e.g. "parallel on/8w". Also moved the Optimal-RC explainer
+          paragraph to sit directly under the Optimal-RC checkbox (it had drifted below skip-ties/
+          parallel/workers as those were added, orphaning it from the control it describes) — no
+          text changed, position only.
+       NOT changed, on purpose: true checkpoint-resume for "continue searching" was theory-crafted
+       and rejected (measured ~43% overhead of a seeded restart vs. a hypothetical true resume,
+       against a permanent two-solver soundness liability to build one) — the existing seeded x3 /
+       search-to-the-end escalations are unchanged and remain the answer there.
+  -->
   <!-- v13.4.6 — DOCUMENTATION ONLY, no logic/UI change. Records a follow-up tightening attempt
        ("UB-I") prompted by v13.4.5's RC-2 result: sound but never once tighter than the existing
        maxPossibleRating() ensemble across 717 fuzz-tested drafts, for a structural reason (not
@@ -1771,7 +1797,7 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           feature, not a significant problem — flagged here so it's remembered rather than
           mistaken for settled ground truth, not because a fix is expected or available.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v14.0 beta</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v14.1 beta</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -1781,7 +1807,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 <div id="solverBadge">
   <div class="si">&#9881;&#65039;</div>
   <div class="sm2">Solver running&hellip;</div>
-  <div class="sh">Don&rsquo;t tap anything &mdash; it&rsquo;s still going.</div>
+  <div class="sh" id="solverBadgeHint">Don&rsquo;t tap anything &mdash; it&rsquo;s still going.</div>
+  <button id="solverStopBtn" onclick="_stopParallelSolve()" style="display:none;pointer-events:auto;margin-top:8px;width:100%;padding:7px;border-radius:8px;border:1px solid var(--warn);background:transparent;color:var(--warn);font-size:12px;font-weight:700;cursor:pointer">&#9632; Stop</button>
 </div>
 
 <!-- ===================== FORMATION ===================== -->
@@ -1911,6 +1938,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
         <input type="checkbox" id="rcAutoOptimal" checked onchange="_toggleAutoRC();saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
         <span><b>Optimal RC</b> &mdash; let the solver pick the ceiling automatically</span>
       </label>
+      <p class="tiny" style="margin:0 0 8px">The highest team rating the solver assumes is reachable &mdash; a <b>speed lever</b>, and the biggest one there is. With <b>Optimal RC</b> on (the default) the solver computes the exact best ceiling for your draft and sets it before every solve &mdash; no guessing, no warnings. Turn it off to drive the slider yourself: a lower ceiling searches far fewer nodes but can miss a better squad, a higher one guarantees completeness but is slower. Left on, you always get the fastest ceiling that&rsquo;s still provably optimal.</p>
+      <div id="ratingCeilWarn" style="display:none;font-size:11px;padding:7px 10px;border-radius:0 7px 7px 0;margin-bottom:8px;background:var(--panel2);border-left:2px solid var(--warn);color:var(--warn)"></div>
       <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:2px 0 8px;cursor:pointer;color:var(--ink)">
         <input type="checkbox" id="skipTies" onchange="saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
         <span><b>Skip ties</b> &mdash; stop at the best score, don&rsquo;t hunt equal-scoring lineups (much faster)</span>
@@ -1919,8 +1948,11 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
         <input type="checkbox" id="parBeta" checked onchange="saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
         <span><b>Parallel search</b> <span style="color:var(--mut)">(beta)</span> &mdash; on 150M+ drafts only, split the search across CPU workers. Same answer, roughly &divide;workers wall-clock. Untick if anything looks off.</span>
       </label>
-      <p class="tiny" style="margin:0">The highest team rating the solver assumes is reachable &mdash; a <b>speed lever</b>, and the biggest one there is. With <b>Optimal RC</b> on (the default) the solver computes the exact best ceiling for your draft and sets it before every solve &mdash; no guessing, no warnings. Turn it off to drive the slider yourself: a lower ceiling searches far fewer nodes but can miss a better squad, a higher one guarantees completeness but is slower. Left on, you always get the fastest ceiling that&rsquo;s still provably optimal.</p>
-      <div id="ratingCeilWarn" style="display:none;font-size:11px;padding:7px 10px;border-radius:0 7px 7px 0;margin-top:8px;background:var(--panel2);border-left:2px solid var(--warn);color:var(--warn)"></div>
+      <div style="margin:2px 0 8px 26px">
+        <label style="font-size:11px;color:var(--mut);display:flex;justify-content:space-between"><span>Workers</span><span id="parWorkersLbl">4</span></label>
+        <input type="range" id="parWorkers" min="2" max="64" value="4" oninput="$('#parWorkersLbl').textContent=this.value" onchange="saveAdvSettings()" style="width:100%">
+        <p class="tiny" style="margin:2px 0 0">Past your device&rsquo;s core count this stops helping and some devices won&rsquo;t handle the top end well.</p>
+      </div>
       <div style="margin-top:14px">
         <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Solver Node Cap (millions)</label>
         <input type="number" id="nodeCapInput" min="1" value="5" inputmode="numeric" style="width:100%" onblur="clampNodeCap(this);saveAdvSettings()">
@@ -2561,8 +2593,8 @@ function _clearSolve(){lastSolve=null;window._solved=null;window._solveCtx=null;
    Stamped into lastSolve (settings/steps) at applyTie/emergency time, so it persists through
    save/export/restore with everything else and refreshLog can print it. */
 let _recActions=[],_recBase=null,_recCurSettings=null;
-function _recSnapshot(){return {rc:getRatingCeil(),capM:Math.round(getNodeCap()/1000000),benchCapM:Math.round(getBenchNodeCap()/1000000),mgrCapM:Math.round(getMgrNodeCap()/1000000),target:_targetScore()||0,bench:_benchMode(),mgrDepth:_mgrFrac(),skipTies:_skipTies(),divPct:_divPct(),shuffles:_shuffleCount()};}
-function _recFmtSettings(s){return 'RC '+s.rc+' \u00b7 node cap '+s.capM+'M \u00b7 bench cap '+s.benchCapM+'M \u00b7 mgr cap '+s.mgrCapM+'M \u00b7 target '+(s.target?s.target:'off')+' \u00b7 bench speed '+s.bench+' \u00b7 mgr depth '+(typeof s.mgrDepth==='number'?s.mgrDepth.toFixed(2):s.mgrDepth)+' \u00b7 skip ties '+(s.skipTies?'on':'off')+' \u00b7 diversity '+(s.shuffles?(s.divPct+'%/'+s.shuffles+'sh'):'off');}
+function _recSnapshot(){return {rc:getRatingCeil(),capM:Math.round(getNodeCap()/1000000),benchCapM:Math.round(getBenchNodeCap()/1000000),mgrCapM:Math.round(getMgrNodeCap()/1000000),target:_targetScore()||0,bench:_benchMode(),mgrDepth:_mgrFrac(),skipTies:_skipTies(),divPct:_divPct(),shuffles:_shuffleCount(),parBeta:_parallelBetaOn(),parWorkers:_parWorkerCount()};}
+function _recFmtSettings(s){return 'RC '+s.rc+' \u00b7 node cap '+s.capM+'M \u00b7 bench cap '+s.benchCapM+'M \u00b7 mgr cap '+s.mgrCapM+'M \u00b7 target '+(s.target?s.target:'off')+' \u00b7 bench speed '+s.bench+' \u00b7 mgr depth '+(typeof s.mgrDepth==='number'?s.mgrDepth.toFixed(2):s.mgrDepth)+' \u00b7 skip ties '+(s.skipTies?'on':'off')+' \u00b7 diversity '+(s.shuffles?(s.divPct+'%/'+s.shuffles+'sh'):'off')+' \u00b7 parallel '+(s.parBeta?('on/'+s.parWorkers+'w'):'off');}
 function _recNoteSettingsDrift(){
   const cur=_recSnapshot();
   if(_recCurSettings){
@@ -2576,6 +2608,7 @@ function _recNoteSettingsDrift(){
     if(cur.mgrDepth!==p.mgrDepth)d.push('mgr depth '+p.mgrDepth.toFixed(2)+'\u2192'+cur.mgrDepth.toFixed(2));
     if(cur.skipTies!==p.skipTies)d.push('skip ties '+(p.skipTies?'on':'off')+'\u2192'+(cur.skipTies?'on':'off'));
     if(cur.divPct!==p.divPct||cur.shuffles!==p.shuffles)d.push('diversity '+(p.shuffles?(p.divPct+'%/'+p.shuffles+'sh'):'off')+'\u2192'+(cur.shuffles?(cur.divPct+'%/'+cur.shuffles+'sh'):'off'));
+    if(cur.parBeta!==p.parBeta||cur.parWorkers!==p.parWorkers)d.push('parallel '+(p.parBeta?('on/'+p.parWorkers+'w'):'off')+'\u2192'+(cur.parBeta?('on/'+cur.parWorkers+'w'):'off'));
     if(d.length)_recActions.push('settings changed: '+d.join(', '));
   }
   _recCurSettings=cur;
@@ -3794,6 +3827,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
 // failure, Worker unavailability, or an error result falls back to the serial path cleanly.
 // Diversity modes are intentionally NOT combined with the parallel path in this beta.
 function _parallelBetaOn(){const cb=$('#parBeta');return !!(cb&&cb.checked);}
+function _parWorkerCount(){const el=$('#parWorkers');const v=el?parseInt(el.value,10):4;return(isNaN(v)||v<2)?2:Math.min(v,64);}
 function _buildSolverWorkerBlob(){
   const src=[futRatingRaw,leagueOf,trueChem,scoreXI,solveBest].map(f=>f.toString()).join('\n')
     +'\nonmessage=function(e){const d=e.data;'
@@ -3802,6 +3836,7 @@ function _buildSolverWorkerBlob(){
     +'postMessage({best:r.best,bestXIs:(r.bestXIs||[]).map(x=>({xi:x.xi,sc:x.sc})),nodes:r.nodes,capped:!!r.capped,maxRating:r.maxRating,error:r.error||null});};';
   return URL.createObjectURL(new Blob([src],{type:'application/javascript'}));
 }
+let _parRun=null; // current parallel run's stoppable state, or null when none is active
 function _runSolveParallel(cap,ratingCeil,reuseSeed){
   const out=$('#solveOut');
   const form=FORMS.find(f=>f.name===chosenForm),t0=performance.now();
@@ -3819,24 +3854,28 @@ function _runSolveParallel(cap,ratingCeil,reuseSeed){
   const candLists=form.slots.map(s=>sortedCards.filter(c=>c.pos.includes(s)));
   const order=form.slots.map((s,i)=>i).sort((a,b)=>candLists[a].length-candLists[b].length);
   const rootCands=candLists[order[0]];
-  const W=Math.max(2,Math.min(4,(navigator.hardwareConcurrency||4)-1,rootCands.length));
+  const W=Math.max(2,Math.min(_parWorkerCount(),rootCands.length));
   const parts=Array.from({length:W},()=>[]);
   rootCands.forEach((c,i)=>parts[i%W].push(c.id));
   const perCap=Math.max(1,Math.ceil(cap/W));
   let url=null;
   try{url=_buildSolverWorkerBlob();}catch(e){url=null;}
   if(!url||typeof Worker==='undefined'){_runSolveInner(cap,ratingCeil,reuseSeed);return;} // no worker support -> serial fallback, identical result
-  const results=[];let doneCt=0,failed=false;
-  const workers=parts.map((ids,wi)=>{
+  const run={url,workers:[],results:[],doneCt:0,failed:false,stopped:false,total:parts.length};
+  _parRun=run;
+  const sb=$('#solverStopBtn');if(sb)sb.style.display='block';
+  const teardown=()=>{run.workers.forEach(x=>{try{x&&x.terminate();}catch(e){}});try{URL.revokeObjectURL(run.url);}catch(e){}
+    if(sb)sb.style.display='none'; if(_parRun===run)_parRun=null;};
+  run.workers=parts.map((ids,wi)=>{
     let w;
     try{w=new Worker(url);}catch(e){return null;}
-    w.onerror=function(){ if(failed)return; failed=true; workers.forEach(x=>{try{x&&x.terminate();}catch(e){}});
-      try{URL.revokeObjectURL(url);}catch(e){} _runSolveInner(cap,ratingCeil,reuseSeed); }; // any worker failure -> clean serial fallback
+    w.onerror=function(){ if(run.failed||run.stopped)return; run.failed=true; teardown(); _runSolveInner(cap,ratingCeil,reuseSeed); }; // any worker failure -> clean serial fallback
     w.onmessage=function(e){
-      results[wi]=e.data;doneCt++;
-      if(doneCt===parts.length&&!failed){
-        workers.forEach(x=>{try{x&&x.terminate();}catch(e){}});try{URL.revokeObjectURL(url);}catch(e){}
-        _finishParallel(results,form,sortedCards,cap,ratingCeil,t0,out,W,perCap);
+      if(run.stopped)return;
+      run.results[wi]=e.data;run.doneCt++;
+      if(run.doneCt===run.total&&!run.failed){
+        teardown();
+        _finishParallel(run.results,form,sortedCards,cap,ratingCeil,t0,out,W,perCap);
       }
     };
     w.postMessage({form:{name:form.name,slots:form.slots.slice()},cards:sortedCards,nodeCap:perCap,
@@ -3844,7 +3883,26 @@ function _runSolveParallel(cap,ratingCeil,reuseSeed){
       skipTies:_skipTies(),rootAllowIds:ids});
     return w;
   });
-  if(workers.some(w=>!w)){ if(!failed){failed=true;workers.forEach(x=>{try{x&&x.terminate();}catch(e){}});try{URL.revokeObjectURL(url);}catch(e){}_runSolveInner(cap,ratingCeil,reuseSeed);} }
+  if(run.workers.some(w=>!w)){ if(!run.failed&&!run.stopped){run.failed=true;teardown();_runSolveInner(cap,ratingCeil,reuseSeed);} }
+}
+function _stopParallelSolve(){
+  const run=_parRun; if(!run||run.stopped)return;
+  run.stopped=true;
+  const partial=run.results.slice();
+  run.workers.forEach(x=>{try{x&&x.terminate();}catch(e){}});
+  try{URL.revokeObjectURL(run.url);}catch(e){}
+  const sb=$('#solverStopBtn');if(sb)sb.style.display='none';
+  _parRun=null;
+  _hideSolverOverlay();
+  const out=$('#solveOut');
+  const got=partial.filter(Boolean);
+  let best=-1,bestXIs=[];
+  for(const r of got){ if(r.best>best){best=r.best;bestXIs=r.bestXIs.slice();} }
+  if(best<0){ if(out)out.innerHTML='<div class="note" style="color:var(--mut)">Stopped \u2014 no result yet.</div>'; _clearSolve(); refreshLog(); return; }
+  if(out)out.innerHTML='<div class="note" style="color:var(--warn)">\u25a0 Stopped early \u2014 best found so far: <b>'+best+'</b> ('+got.length+'/'+partial.length+' workers reported). Not proven optimal.</div>';
+  window._solveCtx={r:{best,bestXIs,capped:true,stoppedEarly:true},form:FORMS.find(f=>f.name===chosenForm)};
+  _recLog&&_recLog('parallel search stopped by user \u2014 best so far '+best);
+  refreshLog();
 }
 function _finishParallel(results,form,sortedCards,cap,ratingCeil,t0,out,W,perCap){
   if(results.some(r=>r&&r.error)){_runSolveInner(cap,ratingCeil,false);return;} // e.g. no-eligible-card edge: let the serial path produce the canonical error UI
@@ -4355,7 +4413,7 @@ function saveAdvSettings(){
     const ar=$('#rcAutoOptimal');
     const bnc=$('#benchNodeCapInput'),mnc=$('#mgrNodeCapInput'),hnc=$('#helperNodeCapInput');
     const dp=$('#divPctSlider'),sc=$('#shuffleCount');
-    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true, skipTies:(($('#skipTies')||{}).checked||false),parBeta:(($('#parBeta')||{checked:true}).checked!==false),divPct:dp?dp.value:undefined,shuffleCount:sc?sc.value:undefined,benchNodeCap:bnc?bnc.value:undefined,mgrNodeCap:mnc?mnc.value:undefined,helperNodeCap:hnc?hnc.value:undefined};
+    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true, skipTies:(($('#skipTies')||{}).checked||false),parBeta:(($('#parBeta')||{checked:true}).checked!==false),parWorkers:(($('#parWorkers')||{value:'4'}).value),divPct:dp?dp.value:undefined,shuffleCount:sc?sc.value:undefined,benchNodeCap:bnc?bnc.value:undefined,mgrNodeCap:mnc?mnc.value:undefined,helperNodeCap:hnc?hnc.value:undefined};
     localStorage.setItem(_ADV_SAVE_KEY,JSON.stringify(d));
   }catch(e){}
 }
@@ -4382,6 +4440,7 @@ function saveAdvSettings(){
     
     if(saved.skipTies!==undefined){var _st=$('#skipTies'); if(_st)_st.checked=!!saved.skipTies;}
     if(saved.parBeta!==undefined){var _pb=$('#parBeta'); if(_pb)_pb.checked=!!saved.parBeta;}
+    if(saved.parWorkers!==undefined){var _pw=$('#parWorkers'); if(_pw){_pw.value=saved.parWorkers;var _pwl=$('#parWorkersLbl');if(_pwl)_pwl.textContent=_pw.value;}}
     if(saved.divPct!==undefined||saved.shuffleCount!==undefined){
       if(saved.divPct!==undefined){var _dp=$('#divPctSlider'); if(_dp)_dp.value=saved.divPct;}
       if(saved.shuffleCount!==undefined){var _sc=$('#shuffleCount'); if(_sc)_sc.value=saved.shuffleCount;}
@@ -4410,6 +4469,7 @@ function resetAdvSettings(){
   const sc=$('#shuffleCount');if(sc)sc.value=0;        // 0 shuffle passes (diversity off)
   const ts=$('#targetScore');if(ts)ts.value='';        // target off
   const pb=$('#parBeta');if(pb)pb.checked=true;       // parallel beta default on (150M+ only)
+  const pw=$('#parWorkers');if(pw){pw.value='4';const pwl=$('#parWorkersLbl');if(pwl)pwl.textContent='4';}
   if(typeof updateRatingCeilLabel==='function')updateRatingCeilLabel();
   saveAdvSettings();_solveCache=null;
 }
