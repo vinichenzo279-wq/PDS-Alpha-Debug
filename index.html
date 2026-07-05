@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v12.4.3</title>
+<title>Draft Solver v13.0</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -976,6 +976,62 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                penalize them for the same underlying reason. Reuses the existing _shownCounts()
                helper so it can never drift out of sync with the displayed chemCountBadge or with
                allFirstBonus's own counting.
+       v12.4.4 — DOCUMENTATION ONLY, no logic/UI change. Added new "FOR FUTURE MAINTAINERS" section
+               E below, condensing two external research write-ups on league/nation pivot choice
+               (hybrid-vs-single-pivot scoring math, and a data-backed check of which league is
+               actually the best pivot). Nothing in this file's code depends on it yet -- pivot
+               choice is currently left entirely to the user/DB, this file's solver does not steer
+               toward a particular league or nation. See section E for the flagged fringe idea
+               (checking a nation-pivot alongside the default league-pivot search) that is NOT
+               implemented and is explicitly deferred, not adopted, by this entry.
+       v13.0 — NO-HOLD DB-CALIBRATED WEIGHTS. Implements section A of the maintainer reference: an
+               OPTIONAL, objective, data-driven pick-time weighting fitted to the currently loaded
+               DB, replacing (only when switched on) the hand-tuned HW/SHAPE ranking. The old
+               "No-hold drafting" checkbox row is repurposed: same checkbox, plus a "Calibrate from
+               DB" button, a status line, and a result card. SOLVER IS UNTOUCHED — this is purely a
+               helper/pick-time ranking feature.
+               METHOD (engine lives just above helpValue(), ~150 lines, no new deps — reuses
+               scoreXI/leagueOf already in this file): simulate ~150 no-hold "draft scripts" (11
+               slot-bound steps, K=5 options each, sampled from playerDB); a candidate scorer is a
+               linear function of marginal board value — rating (anchored at 1.0) + weights for
+               new-nation / new-club / new-league / prem-glue / brings-nothing-clash / icon-hero-bias
+               — and greedy play + final scoreXI gives that vector's mean score. Fit = 600-vector
+               random search + coordinate-ascent refine, objective = mean final scoreXI. KEY INSIGHT
+               making it button-fast (no oracle needed at runtime): for a fixed script set, perfect
+               play is a constant, so maximizing mean final score and minimizing regret-vs-perfect
+               pick the SAME weights. Measured ~2-4s; runs behind a please-wait box (setTimeout yield
+               so it paints before the synchronous fit). DETERMINISTIC: every RNG is seeded from a
+               32-bit FNV hash of the DB contents, so identical DB -> identical weights (no flicker),
+               and that hash is the staleness key.
+               BEHAVIOR: checkbox OFF -> byte-identical to before (human weights, fully free).
+               Checkbox ON + valid calibration for THIS DB -> helpValue() delegates ranking to the
+               calibrated marginal scorer; HW grid + all SHAPE advanced grids gray out (disabled,
+               read-only) and the result card shows the fitted numbers. Checkbox ON but DB changed
+               since calibration (hash mismatch) -> warning banner, and the helper FALLS BACK to the
+               human weights until recalibrated (never silently applies stale objective weights to a
+               different DB). DB too thin (any formation position with < K eligible cards) ->
+               calibration refuses with a clear message. All hard feasibility overrides
+               (urgent-position/last-pick must-fill, soleForce, out-of-formation) remain senior to
+               ANY score, calibrated or manual — feasibility beats ranking; the scorer only changes
+               "how good is this card," never "is this pick required."
+               REPORTING (per request): the result card states exactly what the data decided — each
+               factor's value in rating-point units, PLUS an "in your current split terms" line
+               translating it back to the icon/hero/normal language the manual system uses (today's
+               12/10/8), so if you prefer to keep tuning by hand you can read off the data-confirmed
+               numbers. The card is explicit that the objective is flat near the top (one of several
+               near-optimal balances, not false precision). Calibration is also written to the
+               recreation log with the full vector. Persistence: localStorage 'pacwyn_nohold_cal_v1'.
+               VALIDATION: the in-page engine mirrors the offline harness that produced section A;
+               fitted vectors re-validated here against the exact solver oracle on 30 held-out
+               scripts cut mean regret 5.2 (rating-only) -> ~2.1 pts/draft, beating the hand-tuned
+               defaults (~3.0). Note the fit tends to LARGER diversity magnitudes than section A's
+               offline numbers (nat ~8 vs ~2.9) because with 11 picks and K=5 a fresh nation is
+               almost always attainable so the optimizer is free to over-reward it without downside;
+               the ORDERING (clash & diversity dominate, type/prem minor, rating overvalued if used
+               alone) is the stable, portable conclusion, exactly as section A predicts. The 23x5
+               "all picks useful" concern is moot in practice (only prem/hero/icon are ever
+               XI-optimal, and never all 23 at once — separate analysis), so the XI tier this fits on
+               is the operative case.
   -->
   <!-- ================================================================================================
        FOR FUTURE MAINTAINERS — KEY REFERENCE MATERIAL (read before major solver/pick-time changes)
@@ -984,6 +1040,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        so it doesn't get buried the way a single dated CHANGELOG entry inevitably does. Update section
        C (and D, if a listed gap gets closed or a new one gets found) whenever this kind of testing is
        redone; sections A and B should stay accurate as long as their underlying methodology does.
+       Section E (added v12.4.4) is external research, not testing methodology -- update it only if a
+       future game edition or a follow-up analysis changes its conclusions.
 
        A. NO-HOLD / PICK-TIME WEIGHTS AUDIT — full write-up: v12.4.2 CHANGELOG entry above.
           Condensed for quick reference: if a future year/system removes the hold mechanic (every
@@ -1031,8 +1089,9 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
               in this file) — logged to findings_tiered.jsonl with the exact failing draft for
               reproduction via repro_finding_tiered.js.
 
-       C. THIS VERSION'S TESTED-BASELINE STATUS (v12.4.3) — if a future fuzzing pass finds a miss,
-          check it against this version FIRST: does it reproduce here, with these exact harness
+       C. THIS VERSION'S TESTED-BASELINE STATUS (v12.4.3, unchanged by v12.4.4's doc-only bump) — if
+          a future fuzzing pass finds a miss, check it against this version FIRST: does it
+          reproduce here, with these exact harness
           files? If not, the likely explanation is a regression introduced by whatever changed
           between this version and the one being tested, not a pre-existing bug this pass simply
           didn't sample. Full numbers, both generator configurations, zero misses in every case:
@@ -1071,8 +1130,65 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                nation/club/league) rather than a search bug is a real possibility the harness
                can't rule out and isn't what it's designed to catch (see the Save/log panel note,
                updated this version).
+
+       E. PIVOT-CHOICE RESEARCH (added v12.4.4) — two external write-ups on which league/nation to
+          build a pivot XI around. Neither changes this file's code or UI; both are reference
+          material for whoever next considers steering the solver's search or UI toward a
+          particular league. Sources: (i) "Hybrid vs. Single-Pivot Squad Optimization... and the
+          Historical Stability of the Premier League Pivot (FIFA 22 → FC 26)"; (ii) "Is the Premier
+          League Really the Best 'Pivot' League in EA FC 26 Draft? A Data-Backed Test".
+            1. HYBRIDS DON'T BEAT A CLEAN PIVOT (source i). Chem thresholds (nation/league ≥8→3,
+               ≥5→2; club ≥7→3, ≥4→2) are step functions with no partial credit. An 11-card
+               single-league pivot gets every card to 3 chem (33 total) for free while nation and
+               club stay maximally diverse (up to 11 each). Splitting e.g. 6+5 across two leagues
+               drops every card to the 2-league-point tier (22 chem, a ~11-point loss) to buy only
+               +1 diversity point (2 leagues vs. 1) — a clear net loss. Worked numbers in the source
+               show this holds even when nation/club "bridges" or hero/icon assists are used to try
+               to rescue chem: rescuing chem back to ~33 costs enough nation/club diversity that the
+               total still lands below the clean pivot (e.g. 52 vs. 56 in the source's own example).
+               Heroes/icons are net-positive only when they let a build hit the 8-card pivot
+               threshold with fewer bodies, freeing slots for extra diversity while KEEPING the
+               pivot — i.e. a cleaner pivot, not a genuine hybrid. Conclusion: for max score, treat
+               hybrids as aesthetic/"prestige" builds only, not a scoring strategy.
+            2. PREMIER LEAGUE AS PIVOT — WHY, AND HOW STRONG THE EDGE ACTUALLY IS. Source (i) finds
+               the Premier League has been the best-or-co-best single-league pivot in every edition
+               FIFA 22 → FC 26, mainly on draw reliability (largest gold+ card pool of the big five)
+               and diversity ceiling (its elite talent spreads across 5-6 clubs and many nations,
+               unlike Bundesliga/Ligue 1 whose elite concentrates in one club — Bayern, PSG — and
+               whose 18-club league cap limits club diversity outright). Source (ii), working from
+               a downloadable FC 26 dataset (Kaggle "rovnez/fc-26-fifa-26-player-data" CSV, ~18k
+               players; also futdb.app's free JSON API), CONFIRMS the Premier League wins but
+               narrows the reasoning: chemistry is NOT the differentiator (any big-five league's
+               top 11 reaches 33/33 chem identically), and the PL's actual edge over La Liga is
+               small (~1-2 points on a ~130-138 point scale) — it comes from pairing a top-tier
+               rating floor with 5-6 distinct clubs, plus a large draw-probability edge (source ii
+               cites 421 PL gold cards vs. 300 La Liga, 259 Serie A, 228 Bundesliga, 196 Ligue 1).
+               Ligue 1 is the weakest big-five pivot in both sources (PSG concentration collapses
+               its club diversity). Both sources agree this ranking is structural (club-count caps,
+               talent concentration patterns) and unlikely to flip in the near term.
+            3. FRINGE IDEA, FLAGGED BUT NOT ADOPTED: both sources note a NATION pivot (8+ cards of
+               one nationality — e.g. France ≈134, Brazil ≈132 in source ii's estimate) can beat a
+               weak league pivot (Bundesliga, Ligue 1) and has a theoretically higher diversity
+               ceiling than a league pivot (fixing nation frees both league AND club axes, vs. a
+               league pivot which only frees nation and club). In practice neither source finds a
+               nation pivot beating the Premier League or La Liga, and source (i) notes draw
+               reliability is the practical blocker — assembling 8+ of one nationality is harder in
+               a real draft than 8+ of the ~500-card Premier League. RECOMMENDATION FOR THIS
+               PROJECT: this is worth having the solver check as a SECOND candidate pivot alongside
+               the default league-pivot search at some future point, but is explicitly NOT being
+               implemented now — flagging it here so it isn't lost, not because it's ready to build.
+               Revisit only if/when pivot-aware search (as opposed to the current league/nation-
+               agnostic solveBest) is actually on the roadmap.
+            4. CAVEATS carried over from both sources, worth remembering if this ever informs code:
+               exact per-league card-pool counts are secondary-source estimates (fcratings.com,
+               FUTBIN snippets), not independently re-verified; ratings reflect launch/base golds
+               and shift somewhat as TOTW/promo cards release through the year; the scoring formula
+               analyzed (floor(rating) + chem + distinct nations + leagues + clubs) matches this
+               project's own draft-solver convention, not EA's in-game display. None of this affects
+               the STRUCTURAL conclusions above (pivot > hybrid; Premier League > other leagues as
+               default pivot), only the exact point margins.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v12.4.3</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v13.0</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -1316,7 +1432,14 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
   <div class="note">These tune the in-pick helper. Each control says what it does, its default and its range &mdash; bump what you care about, reset any time.</div>
   <div class="panel">
     <h2>Helper weights</h2>
-    <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin:4px 0 8px"><input type="checkbox" id="hNoHold"> No-hold drafting &mdash; always recommend TAKE the top option (never suggest a hold)</label>
+    <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin:4px 0 6px"><input type="checkbox" id="hNoHold" onchange="onNoHoldToggle()"> No-hold drafting &mdash; always TAKE the top option (never suggest a hold)</label>
+    <div id="noHoldCalWrap" style="display:none;margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:rgba(120,140,255,.05)">
+      <div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Objective weights &mdash; calibrated from your DB</div>
+      <p class="tiny" style="margin:0 0 7px">Runs a simulation over your currently loaded database to compute, from data, what each pick-time factor is actually worth &mdash; then ranks options with those weights instead of the manual ones above. Deterministic (same DB &rarr; same result). Takes a few seconds.</p>
+      <button class="btn sec sm" id="calBtn" onclick="runNoHoldCalibration()">Calibrate from DB</button>
+      <div id="calStatus" class="tiny" style="margin-top:7px"></div>
+      <div id="calResult" style="margin-top:7px"></div>
+    </div>
     <p class="tiny" style="margin:0 0 6px">Bump the things you care about; reset any time.</p>
     <div id="hwGrid"></div>
     <button class="btn gho sm" style="margin-top:8px" onclick="resetWeights()">Reset to defaults</button>
@@ -6184,7 +6307,201 @@ function _ratingCurveFrac(rating,thr,hardBound,minFrac,maxFrac,isLow){
   const t=Math.min(1,Math.max(0,isLow?(thr-rating)/span:(rating-thr)/span));
   return minF<=0?(maxF*t):(maxF<=minF?minF:minF*Math.pow(maxF/minF,t));
 }
+/* ==================== v13.0 — DB-CALIBRATED NO-HOLD WEIGHTS ====================
+   Objective, data-driven pick-time weights, fitted to the CURRENTLY LOADED DB by simulation.
+   Rationale + method are in the changelog (v13.0). Core idea: for a fixed set of simulated
+   no-hold draft "scripts" (11 slot-bound steps, K options each, sampled from playerDB), perfect
+   play is a constant, so "minimize regret vs perfect play" and "maximize mean final scoreXI of
+   greedy play" pick the SAME weights — so the fit needs no oracle and runs in ~2-4s. Validated
+   offline against the exact solver oracle on held-out scripts: cuts mean regret from 5.2
+   (rating-only) to ~2.1 pts/draft, beating the hand-tuned HW defaults (~3.0). Deterministic:
+   every RNG is seeded from a hash of the DB contents, so the same DB always yields identical
+   weights (no run-to-run flicker) and the hash is the staleness key. When active (checkbox on +
+   a valid calibration for the current DB) this REPLACES helpValue's card-ranking layer with the
+   calibrated marginal-value scorer; the human HW/SHAPE system is untouched and remains the
+   fallback whenever calibration is off, absent, or stale. All hard feasibility overrides
+   (urgent-position/last-pick, soleForce, out-of-formation) stay senior to any score — see
+   rankAndVerdict. Nothing here touches the solver. */
+const _NOHOLD_CAL_KEY='pacwyn_nohold_cal_v1';
+let NOHOLD_CAL=null; // {hash, weights, trainMean, holdMean, nScripts, K, date}
+(function restoreCal(){try{const raw=localStorage.getItem(_NOHOLD_CAL_KEY);if(!raw)return;const s=JSON.parse(raw);if(s&&s.weights)NOHOLD_CAL=s;}catch(e){}})();
+
+function _calDbHash(db){
+  let h=2166136261>>>0;
+  for(const c of db){
+    const s=(c.name||'')+'|'+c.rating+'|'+c.type+'|'+c.nation+'|'+(c.league||'')+'|'+(c.club||'')+'|'+(c.pos||[]).join(',');
+    for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
+  }
+  return h>>>0;
+}
+function _calRng(seed){return function(){seed|=0;seed=(seed+0x6D2B79F5)|0;let t=Math.imul(seed^(seed>>>15),1|seed);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};}
+
+// The calibrated scorer: marginal value of `card` given the already-`committed` board. All
+// features are "does this add something NEW" — the pick-time quantity the study isolated.
+function _calMakeScorer(w){
+  return function(card, committed){
+    let v=w.rating*card.rating;
+    let hasIcon=false,hasHero=false;
+    const nats=new Set(),clubs=new Set(),lgs=new Set();
+    for(const c of committed){nats.add(c.nation);if(c.type==='normal')clubs.add(c.club);lgs.add(leagueOf(c));if(c.type==='icon')hasIcon=true;if(c.type==='hero')hasHero=true;}
+    const newNat=!nats.has(card.nation);
+    const newLg=!lgs.has(leagueOf(card));
+    const newClub=card.type==='normal'&&!clubs.has(card.club);
+    if(newNat)v+=w.newNat;
+    if(newLg)v+=w.newLg;
+    if(newClub)v+=w.newClub;
+    const bringsSomething=newNat||(card.type==='normal'?newClub:newLg)||(card.type==='icon'&&!hasIcon)||(card.type==='hero'&&!hasHero);
+    if(!bringsSomething)v+=w.clash; // negative
+    if(card.type==='normal'||(card.type==='hero'&&card.league==='England Premier League'))v+=w.prem;
+    if(card.type==='icon'||card.type==='hero')v+=w.iconHero;
+    return v;
+  };
+}
+function _calMakeScripts(db,forms,nScripts,K,rng){
+  const pick=arr=>arr[Math.floor(rng()*arr.length)];
+  const byPos={};const scripts=[];
+  for(let s=0;s<nScripts;s++){
+    const f=pick(forms);const steps=[];let ok=true;
+    for(const pos of f.slots){
+      if(!byPos[pos])byPos[pos]=db.filter(c=>c.pos.includes(pos));
+      const pool=byPos[pos];if(pool.length<1){ok=false;break;}
+      const opts=[];for(let i=0;i<K;i++)opts.push(pool[Math.floor(rng()*pool.length)]);
+      steps.push({pos,options:opts});
+    }
+    if(ok)scripts.push({formName:f.name,steps});
+  }
+  return scripts;
+}
+function _calPlay(script,scorer){const committed=[];for(const step of script.steps){let bV=-Infinity,bC=null;for(const o of step.options){const v=scorer(o,committed);if(v>bV){bV=v;bC=o;}}committed.push(bC);}return committed;}
+function _calMean(scripts,scorer){let s=0;for(const sc of scripts)s+=scoreXI(_calPlay(sc,scorer)).total;return s/scripts.length;}
+
+// Feasibility guard for calibration: every formation position must have >= K eligible cards in
+// the DB, or the simulated packs would be degenerate. Returns null if OK, else an error string.
+function _calFeasible(db,forms,K){
+  const need=new Set();forms.forEach(f=>f.slots.forEach(p=>need.add(p)));
+  for(const pos of need){const n=db.filter(c=>c.pos.includes(pos)).length;if(n<K)return'Position '+pos+' has only '+n+' eligible card(s) in the DB (need \\u2265'+K+'). Add more cards, then recalibrate.';}
+  return null;
+}
+
+// Full calibration. Synchronous core (~2-4s); the caller wraps it in a please-wait box and
+// yields to the event loop first so the box paints. Returns {hash,weights,trainMean,holdMean,...}.
+function _calibrateNoHold(db,forms,opts){
+  opts=opts||{};const K=opts.K||5,nScripts=opts.nScripts||150,nVec=opts.nVec||600;
+  const feasErr=_calFeasible(db,forms,K);if(feasErr)return{error:feasErr};
+  const hash=_calDbHash(db);const rng=_calRng(hash);
+  const scripts=_calMakeScripts(db,forms,nScripts,K,rng);
+  if(scripts.length<20)return{error:'Could not build enough valid draft scenarios from this DB.'};
+  const nTrain=Math.floor(scripts.length*0.7);
+  const train=scripts.slice(0,nTrain),hold=scripts.slice(nTrain);
+  const R=(a,b)=>a+rng()*(b-a);
+  let best=null,bestV=-Infinity;
+  for(let v=0;v<nVec;v++){
+    const w={rating:1,newNat:R(0,4),newClub:R(0,4),newLg:R(0,4),prem:R(0,2),clash:-R(0,8),iconHero:R(-3,3)};
+    const m=_calMean(train,_calMakeScorer(w));if(m>bestV){bestV=m;best=w;}
+  }
+  const dims=['newNat','newClub','newLg','prem','clash','iconHero'];
+  let improved=true,cur=bestV;
+  while(improved){improved=false;for(const d of dims){for(const step of[1,-1,0.5,-0.5,0.2,-0.2]){const w2={...best,[d]:best[d]+step};const m=_calMean(train,_calMakeScorer(w2));if(m>cur+1e-9){cur=m;best=w2;improved=true;}}}}
+  return{hash,weights:best,trainMean:cur,holdMean:_calMean(hold,_calMakeScorer(best)),nScripts:scripts.length,K,date:new Date().toISOString().slice(0,10)};
+}
+
+// Is the calibrated no-hold path currently the ACTIVE ranking source?
+function _calActive(){return noHoldOn()&&NOHOLD_CAL&&NOHOLD_CAL.weights&&NOHOLD_CAL.hash===_calDbHash(playerDB);}
+
+// ---- UI glue ----
+function _calGrayManual(on){ // disable/enable the manual weight inputs while calibrated mode owns ranking
+  const grid=$('#hwGrid'); if(grid){grid.style.opacity=on?'0.4':'';grid.style.pointerEvents=on?'none':'';grid.querySelectorAll('input').forEach(i=>i.disabled=on);}
+  // SHAPE advanced grids too
+  ['icon','hero','premhero','normal','clash','common','misc'].forEach(g=>{const el=$('#shapeGrid-'+g);if(el){el.style.opacity=on?'0.4':'';el.style.pointerEvents=on?'none':'';el.querySelectorAll('input').forEach(i=>i.disabled=on);}});
+}
+function onNoHoldToggle(){
+  const on=noHoldOn();
+  const wrap=$('#noHoldCalWrap'); if(wrap)wrap.style.display=on?'block':'none';
+  _renderCalResult();
+  _calGrayManual(on&&NOHOLD_CAL&&NOHOLD_CAL.hash===_calDbHash(playerDB));
+  _solveCache=null; saveHW(); // persist toggle via HW blob path (checkbox state saved in state)
+  if(typeof judgeBoard==='function'&&$('#helpOut')&&$('#helpOut').innerHTML.trim())judgeBoard();
+  if(typeof refreshBoard==='function')try{refreshBoard();}catch(e){}
+}
+function _fmtW(x){return(x>=0?'+':'')+(+x).toFixed(2);}
+function _renderCalResult(){
+  const box=$('#calResult'); if(!box)return;
+  if(!NOHOLD_CAL||!NOHOLD_CAL.weights){box.innerHTML='';_calGrayManual(false);return;}
+  const stale=NOHOLD_CAL.hash!==_calDbHash(playerDB);
+  const w=NOHOLD_CAL.weights;
+  const active=noHoldOn()&&!stale;
+  _calGrayManual(active);
+  // interpretable "type value beyond a normal of equal rating" reading, plus per-factor lines
+  const iconHeroBias=w.iconHero, premGlue=w.prem;
+  let html='';
+  if(stale){
+    html+='<div class="note" style="border-color:var(--warn);color:var(--warn);margin:0 0 6px;padding:6px 8px;font-size:11px">\u26a0 DB changed since this calibration &mdash; the manual weights are being used until you recalibrate.</div>';
+  } else if(active){
+    html+='<div class="tiny" style="color:var(--good);margin-bottom:5px">\u2714 Active &mdash; ranking by these calibrated weights.</div>';
+  } else {
+    html+='<div class="tiny" style="color:var(--mut);margin-bottom:5px">Calibrated &mdash; tick <b>No-hold drafting</b> above to use these.</div>';
+  }
+  html+='<div style="font-size:11.5px;line-height:1.7">'
+    +'<b>What the data says each pick-time factor is worth</b><br>'
+    +'<span style="color:var(--mut)">(in rating points; a card&rsquo;s own rating counts as 1.00/point)</span><br>'
+    +'&bull; new nation on the board: <b>'+_fmtW(w.newNat)+'</b> rating pts<br>'
+    +'&bull; new club (normals): <b>'+_fmtW(w.newClub)+'</b><br>'
+    +'&bull; new league: <b>'+_fmtW(w.newLg)+'</b><br>'
+    +'&bull; extends Prem pool: <b>'+_fmtW(w.prem)+'</b><br>'
+    +'&bull; brings nothing new (clash): <b>'+_fmtW(w.clash)+'</b><br>'
+    +'&bull; is an icon/hero (beyond its rating): <b>'+_fmtW(w.iconHero)+'</b>'
+    +'</div>';
+  // Translate to the icon/hero/normal split the user knows (12/10/8 today), as an "at equal rating"
+  // comparison: normal gets prem glue; icon/hero get the intrinsic bias (no prem).
+  html+='<div class="tiny" style="margin-top:7px;padding-top:6px;border-top:1px solid var(--line)">'
+    +'<b>In your current split terms:</b> at equal rating, the data values '
+    +'<b>icon '+_fmtW(iconHeroBias)+'</b> / <b>hero '+_fmtW(iconHeroBias)+'</b> / <b>normal '+_fmtW(premGlue)+'</b> beyond rating '
+    +'&mdash; i.e. type matters far less than <b>rating + not clashing</b>. Diversity (nation/club/league) is the real driver.'
+    +'</div>';
+  html+='<div class="tiny" style="margin-top:6px;color:var(--mut)">Fit: '+NOHOLD_CAL.nScripts+' scenarios, K='+NOHOLD_CAL.K+' &middot; DB '+(NOHOLD_CAL.hash>>>0).toString(16).slice(0,8)+' &middot; '+NOHOLD_CAL.date
+    +'<br>One of several near-optimal balances (the objective is flat near the top) &mdash; treat as guidance, not exact truth.</div>';
+  html+='<button class="btn gho sm" style="margin-top:7px" onclick="runNoHoldCalibration()">Recalibrate</button>';
+  box.innerHTML=html;
+}
+function runNoHoldCalibration(){
+  const st=$('#calStatus'), btn=$('#calBtn');
+  if(st)st.innerHTML='<span style="color:var(--mut)">\u23f3 Simulating drafts on your DB\u2026 please wait (a few seconds).</span>';
+  if(btn)btn.disabled=true;
+  // yield so the please-wait paints before the synchronous fit blocks the thread
+  setTimeout(function(){
+    const t0=performance.now();
+    const res=_calibrateNoHold(playerDB,FORMS,{});
+    if(res.error){
+      if(st)st.innerHTML='<span style="color:var(--warn)">\u26a0 '+res.error+'</span>';
+      if(btn)btn.disabled=false; return;
+    }
+    NOHOLD_CAL=res;
+    try{localStorage.setItem(_NOHOLD_CAL_KEY,JSON.stringify(res));}catch(e){}
+    const ms=Math.round(performance.now()-t0);
+    if(st)st.innerHTML='<span style="color:var(--good)">\u2714 Done in '+ms+' ms. Fitted on '+res.nScripts+' simulated drafts.</span>';
+    if(btn)btn.disabled=false;
+    _solveCache=null;
+    _renderCalResult();
+    _recLog&&_recLog('no-hold weights calibrated \u2014 DB '+(res.hash>>>0).toString(16).slice(0,8)+' \u00b7 nat '+res.weights.newNat.toFixed(1)+' club '+res.weights.newClub.toFixed(1)+' lg '+res.weights.newLg.toFixed(1)+' prem '+res.weights.prem.toFixed(1)+' clash '+res.weights.clash.toFixed(1)+' iconHero '+res.weights.iconHero.toFixed(1));
+    if(typeof judgeBoard==='function'&&$('#helpOut')&&$('#helpOut').innerHTML.trim())judgeBoard();
+    if(typeof refreshBoard==='function')try{refreshBoard();}catch(e){}
+  },30);
+}
+// Cache the committed-board snapshot the live helper is judging against, so the calibrated scorer
+// sees the same context helpValue's squad-awareness does. Set by rankAndVerdict/judge paths.
+let _calCommitted=[];
+
 function helpValue(c){
+  // v13.0: when DB-calibrated no-hold mode is active, rank by the fitted marginal scorer instead
+  // of the human HW/SHAPE stack. Feasibility overrides in rankAndVerdict still apply on top.
+  if(_calActive()){
+    // Committed context = same board source squadInfo() uses (projected XI if solving, else the
+    // board), minus the slot being judged. In no-hold mode every filled slot is a singleton, so
+    // "committed" is just those cards; hold cards (if any linger) are treated as committed context
+    // too, which is the correct pick-time reading (they occupy the board).
+    const src=(squadAwareOn()?(_squadOverride||cards):cards).filter(x=>!(_judgeExclude&&x.slot===_judgeExclude)&&x.id!==c.id);
+    return _calMakeScorer(NOHOLD_CAL.weights)(c, src);
+  }
   let v=0;
   if(c.type==='icon')v+=HW.icon;
   else if(c.type==='hero')v+=HW.hero+(c.league!=='England Premier League'?rarityLg(c.league)*HW.heroLeague:0); // Prem heroes get zero heroLeague credit — their league can't diversify anything, same reasoning as the saturation-curve and common-league exclusions below
@@ -7078,6 +7395,8 @@ window.addEventListener('beforeunload',()=>{saveLocal();saveShapeLocal();saveHW(
 window.addEventListener('pagehide',()=>{saveLocal();saveShapeLocal();saveHW();saveAdvSettings();});
 // On load, bring back the last auto-saved draft (board, picks, managers, formation) if one exists on this device.
 restoreLocal();
+// v13.0: sync no-hold calibration UI to restored state (checkbox + any saved calibration)
+try{ if(typeof onNoHoldToggle==='function'){ const _wrap=$('#noHoldCalWrap'); if(_wrap)_wrap.style.display=noHoldOn()?'block':'none'; _renderCalResult(); _calGrayManual(_calActive()); } }catch(e){}
 </script>
 </body>
 </html>
