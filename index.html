@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v13.4.6</title>
+<title>Draft Solver v13.4.7</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -1286,6 +1286,17 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        behavior of a deliberately-over-tight probe, not a defect, and increasing RC's numeric
        precision was considered and rejected as added risk for no real gain given this result.
   -->
+  <!-- v13.4.7 — DOCUMENTATION ONLY, no logic/UI change. Records a fundamental sampling limitation
+       of the no-hold calibration (section A): _calMakeScripts draws every simulated pack's options
+       uniformly from whatever's loaded in playerDB, which (1) has no representation for real
+       filler/dead-weight cards deliberately left out of the DB, and (2) treats every eligible card
+       as equally likely to appear, with no real pack/pull-rate weighting. New section K assesses
+       both as a real but bounded, second-order miscalibration of the calibration's fitted advisory
+       weights only — it never reaches scoreXI/solveBest, whose fuzz-verified optimality (section
+       H/C) is unaffected. Neither assumption is fixable from inside this app: real per-card
+       pull-rate data isn't obtainable from an encrypted client, so there's no better ground truth
+       to calibrate the sampler against. Flagged for the record, not fixed. No code changed.
+  -->
   <!-- ================================================================================================
        FOR FUTURE MAINTAINERS — KEY REFERENCE MATERIAL (read before major solver/pick-time changes)
        ================================================================================================
@@ -1687,8 +1698,44 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           T_max(m) terms need to come from genuinely independent relaxations (neither one a
           strict subset/reuse of the other's underlying computation), or this will reproduce the
           same null result.
+
+       K. NO-HOLD CALIBRATION'S SAMPLING ASSUMPTIONS (added v13.4.7, doc-only — a known,
+          deliberately-unaddressed limitation, not a bug to fix). _calMakeScripts (section A's
+          underlying pack simulator) draws each simulated pack's K options via
+          pool[Math.floor(rng()*pool.length)] — uniform random over whatever's loaded in
+          playerDB and eligible for that position. Two assumptions this bakes in, worth
+          remembering before trusting the fitted weights as more than an approximation:
+            1. DB-ONLY UNIVERSE. Only cards actually loaded into playerDB can appear in a
+               simulated pack — there's no representation of the real filler/dead-weight cards
+               deliberately left out of the DB (see section I's own curation philosophy: the DB
+               isn't meant to be exhaustive). Assessed as a MINOR effect: a filler card is filler
+               precisely because it essentially never wins a best-of-K comparison against
+               anything else already in the DB, so leaving it out mostly removes noise, not
+               signal. The one place this could matter more is a thin position (few eligible
+               entries) where a filler card would occasionally be forced into someone's K options
+               and be the least-bad pick — _calFeasible's >=K-per-position guard only checks
+               total count, not quality, so a position can pass that gate while still being
+               unrepresentative if the DB happens to be thin there.
+            2. UNIFORM, NOT REAL, PULL RATES. Every eligible card has equal probability of being
+               offered, with no weighting by real-world pack/rarity odds (common golds appearing
+               far more often than rare icons/heroes, for instance). If real packs skew toward
+               commons more than the (already curated, non-filler) DB implies, the simulated packs
+               show stronger average options than real drafts do, which can nudge the several
+               rating-regime-dependent SHAPE thresholds (high/low icon/hero/normal boost-penalty
+               bounds) away from where they'd land on the true distribution. NOT FIXABLE FROM
+               INSIDE THIS APP: real per-card pull-rate data isn't obtainable from an encrypted
+               client, so there's no ground truth to calibrate the sampler against — uniform-over-
+               curated-DB is the least-bad available prior, not a mistake awaiting a fix.
+          BLAST RADIUS, WHY THIS ISN'T TREATED AS A CORRECTNESS BUG: both assumptions live
+          entirely inside the no-hold calibration's TRAINING distribution for its fitted advisory
+          weights (section A). They never reach scoreXI/solveBest, which score whatever cards are
+          ACTUALLY drafted/committed regardless of how the calibration was trained — the core
+          solver's optimality guarantee (fuzz-verified in section H/C) is completely unaffected.
+          Net assessment: a real but bounded, second-order miscalibration of an optional advisory
+          feature, not a significant problem — flagged here so it's remembered rather than
+          mistaken for settled ground truth, not because a fix is expected or available.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v13.4.6</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v13.4.7</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
