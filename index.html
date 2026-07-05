@@ -6,7 +6,7 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v13.0</title>
+<title>Draft Solver v13.2.1.1</title>
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -1032,6 +1032,111 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                "all picks useful" concern is moot in practice (only prem/hero/icon are ever
                XI-optimal, and never all 23 at once — separate analysis), so the XI tier this fits on
                is the operative case.
+       v13.0.1 — DOCUMENTATION ONLY, no code/UI change. Adds a third external write-up to section E
+               below: "EA Sports FC 26 Draft — Maximum-Score Audit: Do Nation Pivots or Other Leagues
+               Ever Beat the Premier League for the Single Highest Possible Score?" — a follow-up to
+               the two sources already cited in section E, this time optimizing for the theoretical
+               CEILING score (not the most reliably-drafted score) and rebuilding the card pool with
+               real per-league normals plus all seven women's leagues (the app tags every normal card
+               "England Premier League" as a build-simplification; this audit checks whether that
+               simplification was hiding anything).
+               HEADLINE RESULT: it wasn't. A clean Premier League pivot still tops every configuration
+               tested, at an estimated max ~143 (rating floor ~87-88, 11/11 distinct nations, up to
+               11/11 distinct clubs, 33/33 chem). La Liga/Serie A/Bundesliga/Ligue 1 clean pivots land
+               ~137-141, capped by club count and rating-floor-while-diversified.
+               NEW WRINKLE — WOMEN'S LEAGUES NARROW THE GAP FOR NATION PIVOTS: since a women's league
+               counts as a fully separate league from its men's equivalent (while a nation stays one
+               nation across genders), a mixed-gender nation pivot can bank an extra distinct-league
+               point or two that a same-gender build can't. Spain and France come closest this way
+               (~140-142, i.e. within ~1-3 points of the PL) by combining top men's internationals
+               with elite women's cards (e.g. Putellas/Bonmatí-tier for Spain). Every other nation
+               pivot tested (Brazil, Argentina, Norway) lands lower (~139-141), still short.
+               PRACTICAL TAKEAWAY (why this doesn't change the recommendation): the Spain/France
+               near-misses require an exact, rare confluence of top cross-gender cards spread across
+               non-overlapping clubs — women's gold pools are far shallower than the Premier League's
+               (~1,971 women's players across all 7 women's leagues combined vs. 421 PL gold cards
+               alone per community rosters), so this is dramatically less reachable in a real random
+               draft than simply drawing 8+ Premier League cards. Filed as a novelty/theoretical
+               curiosity, not a competitive alternative pivot.
+               NET EFFECT ON THIS PROJECT: no code or default-recommendation change. Reinforces (does
+               not revise) the existing section E conclusion that the Premier League is the correct
+               default pivot for both reliable AND maximum-possible scores. See section E.5 below.
+       v13.1 — NO-HOLD CALIBRATION: FIRST-ICON/FIRST-HERO CLUB CREDIT. Full audit of the v13.0
+               calibration engine (scorer, script generator, fit loop, helpValue wiring) turned up
+               six items; only this one changes behavior now, the rest are logged below as deferred
+               (each is either currently inert or judged not worth the risk yet):
+               THE FIX (item 5, the one deemed live): scoreXI grants a one-time +1 distinct-club
+               credit the first time an icon appears on the board, and again the first time a hero
+               appears (clubs=premClubs+hasIcon+hasHero) — but the calibrated scorer's newClub term
+               only ever looked at normals, so that credit had nowhere to go except getting averaged
+               into the flat iconHero bias, which couldn't tell a board's 1st icon (a real, provable
+               point) from its 5th (worth nothing more). Added two new fitted weights, firstIcon and
+               firstHero, that fire exactly once per board on the same condition scoreXI uses (mirrors
+               the existing bringsSomething check, which already had this right). newLg is untouched
+               and already covers the league side correctly for both (leagueOf gives icons the
+               'Icons' bucket and heroes their own league, so a genuinely new one still scores via the
+               existing new-league term) — only the club-credit gap needed a new feature. Storage key
+               bumped pacwyn_nohold_cal_v1 -> _v2 so old cached vectors (missing the two new fields)
+               get ignored on load instead of silently scoring NaN; existing users just see one
+               "stale, please recalibrate" pass.
+               DEFERRED FROM THE SAME AUDIT (not changed this version — revisit if their trigger
+               condition stops holding):
+               1. No-hold checkbox state isn't persisted (saveHW's comment is aspirational; only the
+                  HW weight blob round-trips) — resets to unchecked on reload even with valid fitted
+                  weights sitting in localStorage. Cosmetic-only today; worth a real fix regardless.
+               2/3. The prem-bonus and bringsSomething branches assume every "normal" card is Premier
+                  League — true only because the live DB tags all 1,229 normals that way. Both are a
+                  latent no-op until a real per-league normal DB exists; flagged, not fixed, per "we
+                  aren't adding non-Prem any time soon."
+               4. Hold pairs aren't dedup'd/half-weighted in the calibrated scorer's committed-context
+                  loop, unlike squadInfo/squadAdjust/_shownCounts elsewhere in the file — could double-
+                  count a genuinely fresh nation/league if the user holds two cards in one slot despite
+                  "no-hold" being advisory, not enforced.
+               6. _calActive() re-hashes the full playerDB on every helpValue() call (called inside
+                  .sort()/.map() hot loops) instead of caching the hash once like boardKey() does
+                  elsewhere — a real but pure perf item, no ranking-correctness impact.
+               Also noted, lower priority: the DB hash is order-sensitive (identical cards reordered
+               falsely flags calibration stale), the coordinate-ascent step has no sign clamp on
+               clash/diversity weights, and the result card doesn't call out that a Prem-league hero
+               collects both prem and iconHero bonuses together.
+  -->
+  <!-- v13.2 — CHANGELOG (correction to v13.1's deferral list: items 1 and 4 below are now fixed;
+       2/3/6 and the lower-priority items remain deferred as v13.1 described).
+       1. NO-HOLD CHECKBOX NOW ACTUALLY PERSISTS. Pure autosave fix, no ranking/logic change: added
+          a dedicated pacwyn_nohold_chk_v1 localStorage key, written by onNoHoldToggle() on every
+          flip (saveHW() is untouched and still only carries the manual weight blob) and read back
+          by a new restoreNoHoldChk(), called once at startup before the existing checkbox->UI sync
+          runs. The checkbox now survives a reload exactly like every other saved setting, so fitted
+          NOHOLD_CAL weights sitting in localStorage don't silently go unused until re-ticked.
+       4. HOLD DOUBLE-COUNT WARNING. Rather than reworking the calibrated scorer's committed-context
+          loop to be hold-group-aware (a real behavior change to the ranking math), added
+          _calHoldDoubleCountWarning(): a plain informational note, styled like the existing
+          _poolSizeWarning(), that fires when ALL of (a) calibrated no-hold ranking is the active
+          source, (b) the pick currently being judged is itself a hold (2+ options), and (c) at
+          least one OTHER hold elsewhere on the board still carries more than one card. That's
+          exactly the situation where the calibrated scorer's flat committed-context read can double-
+          count the other hold's nation/league/club as "already used," making a genuinely fresh
+          option look like a false clash. Wired into both the per-slot inline helper
+          (judgeSlotInline) and the standalone Helper-tab judge (judgeBoard) — same warning, both
+          surfaces. No score, verdict, or ranking math changed; this only tells the user when to
+          take the current read with a grain of salt.
+  -->
+  <!-- v13.2.1 — Simplified the v13.2 hold-warning text to a single short line (no longer explains
+       the double-counting mechanism, per request) — logic/trigger conditions unchanged. Also
+       verified two open questions, no code changes needed for either:
+       - Checkbox ON with no valid calibration yet: _calActive() requires NOHOLD_CAL.weights AND a
+         hash match, so helpValue() correctly falls through to the manual HW/SHAPE path until a
+         calibration exists for the loaded DB. Not a bug.
+       - Captain-slot state: isCap is derived fresh from the active slot's kind on every judge call,
+         and clearAbandonedCaptainPick() already drops any uncommitted CAP candidate the moment the
+         user commits a card to a different slot. Moving to a new slot and drafting there behaves
+         correctly already.
+  -->
+  <!-- v13.2.1.1 — DOCUMENTATION ONLY, no code/UI change. Adds section F to the "FOR FUTURE
+       MAINTAINERS" reference block below, answering the standing question from the v13.0 audit:
+       what needs the most scrutiny if non-Prem normals are ever added, or if the scoring formula
+       itself changes — and what stays safe either way (the DFS engine, and the advisory/calibration
+       ranking layers on top of it). See section F.
   -->
   <!-- ================================================================================================
        FOR FUTURE MAINTAINERS — KEY REFERENCE MATERIAL (read before major solver/pick-time changes)
@@ -1187,8 +1292,84 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                project's own draft-solver convention, not EA's in-game display. None of this affects
                the STRUCTURAL conclusions above (pivot > hybrid; Premier League > other leagues as
                default pivot), only the exact point margins.
+            5. MAX-SCORE FOLLOW-UP (added v13.0.1) — a third write-up, "EA Sports FC 26 Draft —
+               Maximum-Score Audit: Do Nation Pivots or Other Leagues Ever Beat the Premier League for
+               the Single Highest Possible Score?", re-runs points 2-3 above but optimizes for the
+               theoretical CEILING score rather than the most reliably-drafted score, and rebuilds the
+               card pool with real per-league normals (instead of the app's PL-only simplification)
+               plus all seven women's leagues. RESULT: no change to the ranking — Premier League clean
+               pivot still tops out highest (~143: floor ~87-88, 11/11 nations, up to 11/11 clubs,
+               33/33 chem), ahead of La Liga/Serie A/Bundesliga/Ligue 1 (~137-141). The one new
+               finding: because a women's league counts as a separate league from its men's
+               equivalent while a nation is shared across genders, a MIXED-GENDER nation pivot (Spain
+               or France, combining elite men's internationals with top women's cards such as
+               Putellas/Bonmatí-tier) can reach ~140-142 — closer than any single-gender nation or
+               weak-league pivot got in point 3, but still below the Premier League's ceiling. This
+               source flags it as impractical to actually draft (women's gold pools are far shallower
+               than the Premier League's, so hitting the exact cross-gender card combination needed is
+               far less likely than simply drawing 8+ Premier League cards) and explicitly recommends
+               treating it as a novelty rather than pursuing it as a build. Does not change this
+               project's default-pivot recommendation or any code path.
+       F. SCRUTINY MAP FOR TWO FUTURE CHANGES (added v13.2.1.1, doc-only — answers the standing
+          question from the v13.0 audit: "what breaks most if prem stops being dominant, or if the
+          scoring formula changes as a whole"). Two DIFFERENT changes, two different blast radii:
+            1. ADDING NON-PREM NORMALS (same formula, bigger population) — biggest single item is
+               leagueOf(): 'function leagueOf(c){...:'England Premier League'}' HARDCODES every
+               normal to Premier League regardless of any real per-card league value, and readForm()
+               (where a normal card is built from the add-card form) never even collects a league for
+               normals — it's not read from the DB, it's assumed. So this isn't a "flip a flag"
+               change: the DB needs a real per-club league field (already flagged as its own big
+               rework, not covered here), AND leagueOf() has to start reading it, AND every place
+               that currently treats "type==='normal'" as a proxy for "counts toward the Prem
+               bucket" needs to switch to an explicit league check instead. That list, most-to-least
+               load-bearing: scoreXI's premClubs/glue/premPool calc (assumes all normals share one
+               league bucket); trueChem()'s parallel normals-are-Prem chem logic (a SEPARATE
+               implementation of similar reasoning — the two can drift if only one is updated);
+               emergencyScoreXI (a third, simplified parallel scorer for the OOP branch — same drift
+               risk); the calibrated no-hold scorer's w.prem/bringsSomething branches (already
+               flagged as latent bugs #2/#3 in the v13.1 changelog, currently inert only because the
+               DB is Prem-only); and the MANAGER_DB league-clash checks in helpValue/vfTie's
+               diversity math. SOLVER SIDE: solveBest's admissible-bound precompute (ubBaseline,
+               slotHeroAllPrem, heroBase) explicitly encodes "Prem is a shared, already-guaranteed
+               league point" as a bound-tightening shortcut (v12.4.0) — with real per-league normals
+               that shortcut's premise (one universal shared bucket) stops being true in general, so
+               it needs re-deriving, not just new constants. The DFS skeleton itself (traversal,
+               pruning mechanics, node cap, tie-break presort, augmenting-path feasibility matching)
+               is untouched by league population and needs no changes — none of it inspects league
+               identity, only counts and rarity. NET: doesn't collapse the system, but touches ~6
+               scoring call-sites plus one specific solver bound refinement; the DFS engine itself is
+               safe. Calibration (_calibrateNoHold) needs no code change either way — it fits by
+               simulating against whatever scoreXI currently computes, so once scoreXI is corrected a
+               recalibration picks up the new reality automatically. The manual HW/SHAPE system would
+               likely want a new slider/weight for "non-Prem normal" the way heroLeague already
+               exists for heroes, but that's additive, not a fix to something broken.
+            2. CHANGING THE SCORING FORMULA ITSELF (e.g. reweighting rating/chem/nations/leagues/
+               clubs, adding a new term, making a term non-additive) is the more dangerous of the
+               two, because solveBest's branch-and-bound correctness guarantee is a PROOF tied to the
+               current additive structure of scoreXI's total, not just its numbers — see the v11.0/
+               v12.0/v12.4.0 comments around the UB precompute (ubBaseline/ubTopIcon/ubTopHero/
+               slotHeroAllPrem) for how specific that proof is (down to "a 2nd+ icon can only ever
+               add +1"). A formula change invalidates that proof outright; the danger is that a stale
+               bound doesn't necessarily crash or error, it can just silently prune a branch that
+               would have been optimal under the NEW formula, so the solver keeps running and keeps
+               returning an answer — just not always the true one — with no built-in signal that
+               anything is wrong. So a formula change means re-deriving the UB from scratch and
+               re-running the section B soundness-fuzzing methodology against it, not swapping
+               constants. trueChem(), emergencyScoreXI, and maxPossibleRating/_benchProofCeil (the
+               draft-feasibility ceiling checks) are separate hand-written formulas that would all
+               need matching updates for the same reason as F.1's drift risk, just triggered by a
+               formula change instead of a population change this time. What's SAFE either way: the
+               DFS traversal/pruning/matching mechanics (score-formula-agnostic, they just compare
+               whatever number scoreXI returns); the manual HW/SHAPE heuristic and the no-hold
+               calibration engine (both are pick-time ADVISORY ranking only, never part of the
+               solver's optimality guarantee — calibration in particular re-fits itself automatically
+               against the new scoreXI, same as in F.1). SHORT ANSWER to "just new UBs, or does the
+               whole system collapse": population change (F.1) is closer to "new UBs plus a handful
+               of call-sites, engine intact"; a formula change (F.2) is closer to "the UB proof and
+               every hand-duplicated scorer need to be rebuilt," even though the DFS engine and the
+               advisory/calibration layers on top of it still don't need to change.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v13.0</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v13.2.1.1</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -6322,7 +6503,7 @@ function _ratingCurveFrac(rating,thr,hardBound,minFrac,maxFrac,isLow){
    fallback whenever calibration is off, absent, or stale. All hard feasibility overrides
    (urgent-position/last-pick, soleForce, out-of-formation) stay senior to any score — see
    rankAndVerdict. Nothing here touches the solver. */
-const _NOHOLD_CAL_KEY='pacwyn_nohold_cal_v1';
+const _NOHOLD_CAL_KEY='pacwyn_nohold_cal_v2'; // v2 (v13.1): weight schema gained firstIcon/firstHero -- bump forces stale v1 blobs to be ignored rather than read in with undefined fields
 let NOHOLD_CAL=null; // {hash, weights, trainMean, holdMean, nScripts, K, date}
 (function restoreCal(){try{const raw=localStorage.getItem(_NOHOLD_CAL_KEY);if(!raw)return;const s=JSON.parse(raw);if(s&&s.weights)NOHOLD_CAL=s;}catch(e){}})();
 
@@ -6350,6 +6531,13 @@ function _calMakeScorer(w){
     if(newNat)v+=w.newNat;
     if(newLg)v+=w.newLg;
     if(newClub)v+=w.newClub;
+    // v13.1: scoreXI grants a one-time +1 distinct-club credit the FIRST time an icon appears, and
+    // again the first time a hero appears (clubs=premClubs+(hasIcon?1:0)+(hasHero?1:0)) -- separate
+    // from newLg (which already covers the "Icons" league bucket / a hero's own league via leagueOf)
+    // and from the flat iconHero bias below, which previously had to average over 1st-vs-Nth icon/
+    // hero and couldn't tell them apart. These fire once per board, exactly like scoreXI's flags.
+    if(card.type==='icon'&&!hasIcon)v+=w.firstIcon;
+    if(card.type==='hero'&&!hasHero)v+=w.firstHero;
     const bringsSomething=newNat||(card.type==='normal'?newClub:newLg)||(card.type==='icon'&&!hasIcon)||(card.type==='hero'&&!hasHero);
     if(!bringsSomething)v+=w.clash; // negative
     if(card.type==='normal'||(card.type==='hero'&&card.league==='England Premier League'))v+=w.prem;
@@ -6396,10 +6584,10 @@ function _calibrateNoHold(db,forms,opts){
   const R=(a,b)=>a+rng()*(b-a);
   let best=null,bestV=-Infinity;
   for(let v=0;v<nVec;v++){
-    const w={rating:1,newNat:R(0,4),newClub:R(0,4),newLg:R(0,4),prem:R(0,2),clash:-R(0,8),iconHero:R(-3,3)};
+    const w={rating:1,newNat:R(0,4),newClub:R(0,4),newLg:R(0,4),prem:R(0,2),clash:-R(0,8),iconHero:R(-3,3),firstIcon:R(0,3),firstHero:R(0,3)};
     const m=_calMean(train,_calMakeScorer(w));if(m>bestV){bestV=m;best=w;}
   }
-  const dims=['newNat','newClub','newLg','prem','clash','iconHero'];
+  const dims=['newNat','newClub','newLg','prem','clash','iconHero','firstIcon','firstHero'];
   let improved=true,cur=bestV;
   while(improved){improved=false;for(const d of dims){for(const step of[1,-1,0.5,-0.5,0.2,-0.2]){const w2={...best,[d]:best[d]+step};const m=_calMean(train,_calMakeScorer(w2));if(m>cur+1e-9){cur=m;best=w2;improved=true;}}}}
   return{hash,weights:best,trainMean:cur,holdMean:_calMean(hold,_calMakeScorer(best)),nScripts:scripts.length,K,date:new Date().toISOString().slice(0,10)};
@@ -6414,12 +6602,20 @@ function _calGrayManual(on){ // disable/enable the manual weight inputs while ca
   // SHAPE advanced grids too
   ['icon','hero','premhero','normal','clash','common','misc'].forEach(g=>{const el=$('#shapeGrid-'+g);if(el){el.style.opacity=on?'0.4':'';el.style.pointerEvents=on?'none':'';el.querySelectorAll('input').forEach(i=>i.disabled=on);}});
 }
+// v13.1 fix (audit item 1): the no-hold checkbox previously had NO real persistence -- saveHW()
+// only ever serialized the HW weight object (no no-hold field in it), so the comment in
+// onNoHoldToggle() claiming "checkbox state saved in state" was aspirational, not true. It reset
+// to unchecked on every reload even with valid fitted NOHOLD_CAL weights still in localStorage.
+// Dedicated key, autosaved on every toggle, restored once at startup below. No ranking/logic change.
+const _NOHOLD_CHK_KEY='pacwyn_nohold_chk_v1';
+function saveNoHoldChk(){try{localStorage.setItem(_NOHOLD_CHK_KEY,JSON.stringify(noHoldOn()));}catch(e){}}
+function restoreNoHoldChk(){try{const raw=localStorage.getItem(_NOHOLD_CHK_KEY);if(raw==null)return;const el=$('#hNoHold');if(el)el.checked=!!JSON.parse(raw);}catch(e){}}
 function onNoHoldToggle(){
   const on=noHoldOn();
   const wrap=$('#noHoldCalWrap'); if(wrap)wrap.style.display=on?'block':'none';
   _renderCalResult();
   _calGrayManual(on&&NOHOLD_CAL&&NOHOLD_CAL.hash===_calDbHash(playerDB));
-  _solveCache=null; saveHW(); // persist toggle via HW blob path (checkbox state saved in state)
+  _solveCache=null; saveHW(); saveNoHoldChk(); // saveHW kept for the manual-weight blob; saveNoHoldChk is the real persistence for the checkbox itself
   if(typeof judgeBoard==='function'&&$('#helpOut')&&$('#helpOut').innerHTML.trim())judgeBoard();
   if(typeof refreshBoard==='function')try{refreshBoard();}catch(e){}
 }
@@ -6449,7 +6645,9 @@ function _renderCalResult(){
     +'&bull; new league: <b>'+_fmtW(w.newLg)+'</b><br>'
     +'&bull; extends Prem pool: <b>'+_fmtW(w.prem)+'</b><br>'
     +'&bull; brings nothing new (clash): <b>'+_fmtW(w.clash)+'</b><br>'
-    +'&bull; is an icon/hero (beyond its rating): <b>'+_fmtW(w.iconHero)+'</b>'
+    +'&bull; is an icon/hero (beyond its rating): <b>'+_fmtW(w.iconHero)+'</b><br>'
+    +'&bull; 1st icon on the board (club credit): <b>'+_fmtW(w.firstIcon)+'</b><br>'
+    +'&bull; 1st hero on the board (club credit): <b>'+_fmtW(w.firstHero)+'</b>'
     +'</div>';
   // Translate to the icon/hero/normal split the user knows (12/10/8 today), as an "at equal rating"
   // comparison: normal gets prem glue; icon/hero get the intrinsic bias (no prem).
@@ -6482,7 +6680,7 @@ function runNoHoldCalibration(){
     if(btn)btn.disabled=false;
     _solveCache=null;
     _renderCalResult();
-    _recLog&&_recLog('no-hold weights calibrated \u2014 DB '+(res.hash>>>0).toString(16).slice(0,8)+' \u00b7 nat '+res.weights.newNat.toFixed(1)+' club '+res.weights.newClub.toFixed(1)+' lg '+res.weights.newLg.toFixed(1)+' prem '+res.weights.prem.toFixed(1)+' clash '+res.weights.clash.toFixed(1)+' iconHero '+res.weights.iconHero.toFixed(1));
+    _recLog&&_recLog('no-hold weights calibrated \u2014 DB '+(res.hash>>>0).toString(16).slice(0,8)+' \u00b7 nat '+res.weights.newNat.toFixed(1)+' club '+res.weights.newClub.toFixed(1)+' lg '+res.weights.newLg.toFixed(1)+' prem '+res.weights.prem.toFixed(1)+' clash '+res.weights.clash.toFixed(1)+' iconHero '+res.weights.iconHero.toFixed(1)+' 1stIcon '+res.weights.firstIcon.toFixed(1)+' 1stHero '+res.weights.firstHero.toFixed(1));
     if(typeof judgeBoard==='function'&&$('#helpOut')&&$('#helpOut').innerHTML.trim())judgeBoard();
     if(typeof refreshBoard==='function')try{refreshBoard();}catch(e){}
   },30);
@@ -6669,6 +6867,23 @@ function rankRows(ranked,excludeSlotId,isCap){return ranked.map((r,k)=>{
     +(isCap?'':'<div class="m" style="color:var(--mut);opacity:.8">'+chemCountBadge(r.c,excludeSlotId)+'</div>')+'</div>'
     +'<div class="r">'+r.v.toFixed(1)+'</div></div>';
 }).join('');}
+// v13.1 fix (audit item 4): the calibrated no-hold scorer's committed-context loop has no
+// hold-group awareness (unlike squadInfo/squadAdjust/_shownCounts, which weigh holds at 0.5 and
+// dedupe by hold group for exactly this reason) -- so if a genuine multi-card hold is still
+// sitting elsewhere on the board while calibrated ranking is active, that hold's nation/league/
+// club can get double-counted as "already used" against whichever pick is being judged right now,
+// making a genuinely fresh option look like a false clash. Rather than reworking the scorer (a
+// real logic change), this just surfaces the situation so the read isn't taken at face value.
+// Fires only when: calibrated ranking is the active source, the CURRENT pick is itself a hold
+// decision (2+ options), and at least one OTHER (different) hold elsewhere on the board still
+// carries more than one card.
+function _calHoldDoubleCountWarning(excludeSlotId,curOptsLen){
+  if(!_calActive())return '';
+  if(!(curOptsLen>1))return ''; // not currently deciding a hold -- nothing to warn about
+  const otherHoldExists=(board||[]).some(sl=>sl.id!==excludeSlotId&&!sl.busted&&slotCards(sl.id).length>1);
+  if(!otherHoldExists)return '';
+  return '<div class="tiny" style="color:var(--warn);margin-top:6px">\u26a0 You\u2019re holding with no-hold drafting on \u2014 this will affect the evaluation.</div>';
+}
 function scoreExplain(){
   const parts=['card type'];
   if(HW.clubRarity>0)parts.push('Prem-club rarity');
@@ -6684,7 +6899,7 @@ function judgeBoard(){
   if(!helpCards.length){$('#helpOut').innerHTML='<div class="note">Add the options first.</div>';return}
   const {ranked,verdict,detail}=rankAndVerdict(helpCards);
   $('#helpOut').innerHTML='<div class="summary" style="margin-bottom:0"><div class="bigrow"><div class="tot" style="font-size:30px">'+verdict+'</div></div>'
-    +'<div class="tiny" style="color:var(--ink)">'+detail+'</div><hr><div class="divh">Ranked</div>'+rankRows(ranked)
+    +'<div class="tiny" style="color:var(--ink)">'+detail+'</div>'+_calHoldDoubleCountWarning(null,helpCards.length)+'<hr><div class="divh">Ranked</div>'+rankRows(ranked)
     +'<div class="tiny" style="margin-top:6px">'+scoreExplain()+'</div></div>';
 }
 // Inline in-pick helper: rates the active slot's options against the rest of the board (this slot excluded, squad-awareness forced on).
@@ -7110,7 +7325,7 @@ function judgeSlotInline(preCtx){
       }
     }
   }
-  el.innerHTML='<div class="summary" style="margin:6px 0 2px">'+head+projNote+soleNote+urgent+starterNote+_poolSizeWarning()+'<hr><div class="divh">Helper rating</div>'+rankRows(ranked,s.id,isCap)+'<button class="btn gho sm" style="margin-top:8px" onclick="runHelper()">\u21bb Re-check</button>'+helperDeepBtn
+  el.innerHTML='<div class="summary" style="margin:6px 0 2px">'+head+projNote+soleNote+urgent+starterNote+_poolSizeWarning()+_calHoldDoubleCountWarning(s.id,opts.length)+'<hr><div class="divh">Helper rating</div>'+rankRows(ranked,s.id,isCap)+'<button class="btn gho sm" style="margin-top:8px" onclick="runHelper()">\u21bb Re-check</button>'+helperDeepBtn
     +'<div class="tiny" style="margin-top:8px">Rated against your weights \u2014 feel free to overrule any call you don\u2019t agree with. It\u2019s your draft. Evaluations are generated on a per-hold basis, so re-evaluate if you make a change elsewhere.</div>'+inlineHoldNote+'</div>';
 }
 
@@ -7395,6 +7610,8 @@ window.addEventListener('beforeunload',()=>{saveLocal();saveShapeLocal();saveHW(
 window.addEventListener('pagehide',()=>{saveLocal();saveShapeLocal();saveHW();saveAdvSettings();});
 // On load, bring back the last auto-saved draft (board, picks, managers, formation) if one exists on this device.
 restoreLocal();
+// v13.2: restore the persisted no-hold checkbox (see restoreNoHoldChk def) before the sync below reads it
+try{ restoreNoHoldChk(); }catch(e){}
 // v13.0: sync no-hold calibration UI to restored state (checkbox + any saved calibration)
 try{ if(typeof onNoHoldToggle==='function'){ const _wrap=$('#noHoldCalWrap'); if(_wrap)_wrap.style.display=noHoldOn()?'block':'none'; _renderCalResult(); _calGrayManual(_calActive()); } }catch(e){}
 </script>
