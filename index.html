@@ -6,7 +6,14 @@
 <meta property="og:description" content="DraftSolver">
 <!-- VERSION: bump this AND the matching v-number in the <h1><span> below on every patch, however
      small — see the longer note next to the <h1> for why this matters. -->
-<title>Draft Solver v14.0 beta</title>
+<title>Draft Solver v15.1.10</title>
+<!-- ABOUT THIS APP / DATA SOURCE:
+     This tool is for PACWYN, a game that heavily parallels EA FC but is NOT FC — it uses FC's
+     real player cards as a base and adds its own exclusive cards on top. That's why FC data is a
+     useful reference for the player/manager DBs here, but should not be assumed 100% identical —
+     ratings, availability, or specific cards may diverge, and PACWYN-exclusive entries have no FC
+     equivalent at all. Keep this in mind before assuming any FC source is authoritative for this
+     app's DB. -->
 <style>
 :root{
   --bg:#05080c; --panel:#0c131b; --panel2:#111c27; --line:#1d2c3a;
@@ -129,6 +136,29 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        for the user to tell which build they're on, and (b) can let an incompatible old auto-save
        load as if nothing changed. Bump on every patch, no matter how small.
 
+       ORDERING (added v15.1.2): do the version/title/changelog bump LAST, only once every other
+       edit for the patch is made and verified — not as an early or middle step. If work is
+       interrupted (timeout, error, dropped session) partway through, an already-bumped version
+       number would mislabel a half-finished file as a completed vX.Y.Z build, which is worse than
+       an unbumped one (that at least honestly still reads as the prior version).
+
+       BEFORE A CORE-FUNCTIONALITY CHANGE (added v15.1.3): if what you're touching affects formation/
+       slot picking, the main XI solve, bench selection, or manager choice, read section L's "THE
+       UNDERLYING DRAFT FORMAT" paragraph in the FOR FUTURE MAINTAINERS block below FIRST — it lays
+       out the actual pipeline (pick formation -> pick captain -> pick each slot, PRIMARY position
+       only -> pick the bench, any position -> draft finishes -> pick 1 of 5 managers) and which
+       parts of this app model which stage. Several past mistakes (e.g. the fillability-based
+       formation ranking in section L itself) came from conflating stages that use different rules.
+
+       DOC-ONLY EDITS STILL EACH GET THEIR OWN BUMP (added v15.1.3.1, itself a correction of the
+       v15.1.3 pass that stacked several separate doc-only edits — the OOP cross-reference, the
+       section F pointer, and this file's own "before a core-functionality change" note above —
+       under one unbumped version number). "It's just a comment/doc change" is NOT an exception to
+       the ORDERING rule above: every edit that lands, however small or textual, gets its own bump
+       once it's done. Two files both reading e.g. "v15.1.3" but differing in which of several doc
+       edits made it in defeats the entire point of the version stamp (see the opening paragraph
+       above) just as surely as an unbumped logic change would.
+
        Which number to bump (format is MAJOR.BUGFIX.TEXT, optionally .CORRECTION):
          - 1st number (MAJOR): a significant functionality change — new feature, changed behavior,
            anything that substantially alters what the app actually does. Bump this, and reset
@@ -169,6 +199,50 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        being able to scan "which version's summary mentions touching this code path" narrows down
        the culprit far faster than bisecting blind. Keep entries short; the "why" belongs in the
        inline code comments near the change, not here.
+
+       READING ORDER FOR FUTURE MAINTAINERS (added v15.1.8): this file's version history has grown
+       long enough that reading it all, every time, is no longer the efficient way in. Skip straight
+       to the "FOR FUTURE MAINTAINERS — KEY REFERENCE MATERIAL" block (lettered sections A-N) first
+       — it holds the durable, still-relevant knowledge, kept up to date on purpose so it doesn't
+       require reading the changelog to reconstruct. Only come back to the CHANGELOG blocks below
+       (or the historical pre-v8.12 log) when you need the specific detail of one particular past
+       change — e.g. tracing exactly when/why a code path was touched, per the debugging use-case
+       the CHANGELOG CONVENTION paragraph above describes. Treat the changelog as an archive to
+       search, not a document to read start-to-finish.
+  -->
+  <!-- ================================================================================================
+       HISTORICAL CHANGELOG — PRE-v8.12 (SUMMARIZED, for reference only)
+       ================================================================================================
+       Recovered from an old standalone CHANGELOG-4.md that predates the CHANGELOG CONVENTION started
+       at v8.12 above; this file used its own independent v2.x/v3.x version numbering at the time, with
+       no numeric relationship to the v8.12+ scheme below. Condensed here to the essentials, since the
+       full blow-by-blow isn't needed day-to-day — see CHANGELOG-4.md itself if the full detail is ever
+       needed. GAP: nothing documents what happened between this history's last entry (v3.3) and v8.12,
+       where the CHANGELOG CONVENTION picks up — that stretch has no changelog record at all.
+
+       v2.0 — Manager DB split into its own import/export, grown to 91 managers (17 added, 2 rating
+              fixes, one new league). Tie-breaking now prefers the squad leaving the most managers open,
+              with a switch-between-ties control and named sub-in guidance. Fixed dropdown click-through;
+              helper now names players instead of clubs.
+       v2.1 — Accent-insensitive search across all dropdowns. Removed a duplicate manager (90 total).
+              Graceful partial-fill: an unsolvable board fills what it can instead of failing outright.
+       v2.2 — Fixed a ReferenceError in the helper's "Add option" button.
+       v2.3 — Helper/scoring overhaul: weights normalized to a consistent 0-1 scale with new defaults;
+              nation rarity rebuilt as a concave curve from the live DB; "Factor in my squad" rebuilt to
+              properly punish redundancy/clashes; added a real chemistry calculator for non-33 chem
+              cases; fixed mobile dropdown scroll/tap bugs.
+       v3.0 — The board rebuild: full 23-slot formation-based board UI replacing the flat card list,
+              with commit/hold/bust per slot; inline helper judges live options against a projected XI;
+              new Weights tab with Advanced rarity knobs; captain picking from the board; rarity became
+              a live, DB-derived clash-probability model; icon/hero saturation+refund logic; new
+              emergency-fill path for boards with no legal full XI.
+       v3.1 — Helper became opt-in (no more automatic solves on every edit); fixed a search bug that
+              collapsed same-name/rating cards with different leagues; added rating-filter search
+              ("Van Dijk 90"); DB tab can now add managers directly.
+       v3.2 — Manager DB consolidated into the DB tab (Import/Export/Reset/Add-manager alongside the
+              player-DB controls); added a "Reset managers to default" button.
+       v3.3 — Clearer edit mode (highlight + Cancel edit banner); best-effort auto-save of the whole
+              draft to local device storage, with Export remaining the guaranteed backup.
   -->
   <!-- CHANGELOG:
        v8.12 — applyTie() now canonicalizes main.xi to the min-swap relaid layout (_minSwapLayout)
@@ -280,6 +354,30 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                reads 'Geertruida (normal)'. Same cascade (rating->type->nation->league->club->pos,
                shows only what differs; ordinal last resort). Still display-only; demo fingerprint
                357,777.
+       v9.0.4 — Two fixes to the pick disambiguator. (1) Positions are an UNORDERED set, so the
+               position tier now sorts before comparing/displaying — LB/CB/RB and CB/LB/RB no longer
+               count as different, which was producing bogus position suffixes. (2) The literal-
+               duplicate ordinal was '#'+(pick index in the whole list), so identical B5 twins printed
+               '#6'; it now ranks within the same-name group (by card id) and reads #1 / #2. Ordinal
+               stays cosmetic (identical cards are interchangeable) but is now meaningful. Display-
+               only; demo fingerprint 357,777.
+
+       v9.1.0 — Helper rating rows now show a pure chemistry-overlap count per option: "Nth
+               <Nation>" always, plus "Nth <League>" for heroes only (normals are always Prem,
+               so that dimension was pure noise there) and "Nth <Club>" for normals only. Counts
+               are per BOARD SLOT (excluding the slot being judged), not per physical card, so a
+               hold sitting on two same-nation options only contributes 1 (only one of them ever
+               actually fields). New slotPureCounts()/chemCountBadge() helpers; rankRows() takes
+               an excludeSlotId param, threaded from judgeSlotInline's s.id.
+
+       v9.2.0 — New Misc weight: allFirstBonus (default 5, squad mode). Flat bonus added in
+               helpValue() when a card is "1st" on every dimension chemCountBadge shows for its
+               type (nation always; league for heroes; club for normals) — a simple counterweight
+               to the clash-avoidance/saturation machinery, rewarding total freshness rather than
+               reasoning about severity curves. Also factored chemCountBadge's counting logic out
+               into a shared _shownCounts() helper so the eval bonus and the displayed badge can
+               never drift out of sync with each other.
+
        v9.3.0 — Fix: maxPossibleRating()'s header comment has always documented THREE relaxations
                (UB-A hold-collapsed/position-agnostic, UB-B per-position hold-distinct, UB-C
                position-adjacency components) feeding one Math.min(), but the function body only
@@ -302,30 +400,6 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                one 95-rated triple-eligible card plus three single-position fillers): pre-fix UB-B
                alone gave a bound of 95 (triple-counting the one card); with UB-C the overall bound
                correctly tightens to 87, matching the true achievable XI.
-
-       v9.2.0 — New Misc weight: allFirstBonus (default 5, squad mode). Flat bonus added in
-               helpValue() when a card is "1st" on every dimension chemCountBadge shows for its
-               type (nation always; league for heroes; club for normals) — a simple counterweight
-               to the clash-avoidance/saturation machinery, rewarding total freshness rather than
-               reasoning about severity curves. Also factored chemCountBadge's counting logic out
-               into a shared _shownCounts() helper so the eval bonus and the displayed badge can
-               never drift out of sync with each other.
-
-       v9.1.0 — Helper rating rows now show a pure chemistry-overlap count per option: "Nth
-               <Nation>" always, plus "Nth <League>" for heroes only (normals are always Prem,
-               so that dimension was pure noise there) and "Nth <Club>" for normals only. Counts
-               are per BOARD SLOT (excluding the slot being judged), not per physical card, so a
-               hold sitting on two same-nation options only contributes 1 (only one of them ever
-               actually fields). New slotPureCounts()/chemCountBadge() helpers; rankRows() takes
-               an excludeSlotId param, threaded from judgeSlotInline's s.id.
-
-       v9.0.4 — Two fixes to the pick disambiguator. (1) Positions are an UNORDERED set, so the
-               position tier now sorts before comparing/displaying — LB/CB/RB and CB/LB/RB no longer
-               count as different, which was producing bogus position suffixes. (2) The literal-
-               duplicate ordinal was '#'+(pick index in the whole list), so identical B5 twins printed
-               '#6'; it now ranks within the same-name group (by card id) and reads #1 / #2. Ordinal
-               stays cosmetic (identical cards are interchangeable) but is now meaningful. Display-
-               only; demo fingerprint 357,777.
 
        v9.4.0 — Added UB-D, a fourth relaxation to maxPossibleRating(), and it comes with a
                ROLLBACK NOTE up front in case it's ever wrong: if UB-D is suspected of returning a
@@ -1266,6 +1340,26 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
        to point there instead of describing them as an external bundle. Still documentation only
        — nothing executes, no app logic/UI touched.
   -->
+  <!-- v13.4.5 — DOCUMENTATION ONLY, no logic/UI change. The section H replacement harness
+       (fuzz_run_rcsens.js) has now actually been run against this version, across two combo-size
+       configurations totaling 1,774 drafts over all twelve fuzz_gen.js regimes. Zero soundness
+       mismatches (auto-RC and RC-103 both matched the independent brute-force oracle in every
+       case), zero RC-1 score drops (lowering RC by 1 never cost more than a tie, as theory
+       predicted), and exactly 1/1,774 RC-2 misses (the deliberate over-tight positive control) —
+       confirms RC pruning is load-bearing but only barely trips even when intentionally
+       over-tightened, and did not get worse at larger/more complex instance sizes (0/247 misses in
+       the larger-scale configuration). Real numbers recorded in section H below, replacing its
+       "not run yet" placeholder. No code changed as a result — RC-2's rare miss is the expected
+       behavior of a deliberately-over-tight probe, not a defect, and increasing RC's numeric
+       precision was considered and rejected as added risk for no real gain given this result.
+  -->
+  <!-- v13.4.6 — DOCUMENTATION ONLY, no logic/UI change. Records a follow-up tightening attempt
+       ("UB-I") prompted by v13.4.5's RC-2 result: sound but never once tighter than the existing
+       maxPossibleRating() ensemble across 717 fuzz-tested drafts, for a structural reason (not
+       just an empirical shrug) explained in new section J. Recorded so this specific "mix a
+       tight global sum-bound with a loose partial-sum bound" idea isn't re-attempted without the
+       write-up in hand. No code changed; UB-I was prototyped and tested off-tree only.
+  -->
   <!-- v13.4.7 — DOCUMENTATION ONLY, no logic/UI change. Records a fundamental sampling limitation
        of the no-hold calibration (section A): _calMakeScripts draws every simulated pack's options
        uniformly from whatever's loaded in playerDB, which (1) has no representation for real
@@ -1313,25 +1407,196 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           run is plain divstatic). Summary line reports "parallel xN (beta)"; recreation log records
           engagement. Settings: #parBeta persisted via saveAdvSettings, reset -> on.
   -->
-  <!-- v13.4.6 — DOCUMENTATION ONLY, no logic/UI change. Records a follow-up tightening attempt
-       ("UB-I") prompted by v13.4.5's RC-2 result: sound but never once tighter than the existing
-       maxPossibleRating() ensemble across 717 fuzz-tested drafts, for a structural reason (not
-       just an empirical shrug) explained in new section J. Recorded so this specific "mix a
-       tight global sum-bound with a loose partial-sum bound" idea isn't re-attempted without the
-       write-up in hand. No code changed; UB-I was prototyped and tested off-tree only.
+  <!-- v14.1 (BETA) — three follow-ups to v14.0's parallel search, worker-path only:
+       1) STOP BUTTON. Only possible now that the DFS runs off-thread: a synchronous solveBest()
+          call can't be interrupted from a click handler (no yield point), which is why every prior
+          stop attempt on the serial path failed — this doesn't touch the serial path at all. A
+          #solverStopBtn sits inside #solverBadge (pointer-events:auto on an otherwise
+          pointer-events:none badge, same "separate layers so button is tappable" idea the overlay
+          comment already described) and only shows during a parallel run. Click ->
+          _stopParallelSolve(): terminates every worker immediately, revokes the blob URL, and
+          banks whichever workers had already posted a result, reporting the best of those as an
+          unproven "stopped early" result (or "no result yet" if none had finished). A _parRun
+          token guards against a stray onmessage racing the terminate.
+       2) WORKER-COUNT SLIDER. Replaces v14.0's hardcoded min(4, cores-1) with a user-set value,
+          range 2-64 (#parWorkers), default 4. Clamped at use by root-candidate count same as
+          before (a worker with no root cards is wasted). No change to the partition/merge logic —
+          it was already Array.from({length:W}) generic in W.
+       3) RECREATION LOG. #parBeta and #parWorkers were missing from _recSnapshot/_recFmtSettings/
+          _recNoteSettingsDrift — same gap v10.0.2 fixed for skip-ties. Added alongside the existing
+          diversity fields; format e.g. "parallel on/8w". Also moved the Optimal-RC explainer
+          paragraph to sit directly under the Optimal-RC checkbox (it had drifted below skip-ties/
+          parallel/workers as those were added, orphaning it from the control it describes) — no
+          text changed, position only.
+       NOT changed, on purpose: true checkpoint-resume for "continue searching" was theory-crafted
+       and rejected (measured ~43% overhead of a seeded restart vs. a hypothetical true resume,
+       against a permanent two-solver soundness liability to build one) — the existing seeded x3 /
+       search-to-the-end escalations are unchanged and remain the answer there.
   -->
-  <!-- v13.4.5 — DOCUMENTATION ONLY, no logic/UI change. The section H replacement harness
-       (fuzz_run_rcsens.js) has now actually been run against this version, across two combo-size
-       configurations totaling 1,774 drafts over all twelve fuzz_gen.js regimes. Zero soundness
-       mismatches (auto-RC and RC-103 both matched the independent brute-force oracle in every
-       case), zero RC-1 score drops (lowering RC by 1 never cost more than a tie, as theory
-       predicted), and exactly 1/1,774 RC-2 misses (the deliberate over-tight positive control) —
-       confirms RC pruning is load-bearing but only barely trips even when intentionally
-       over-tightened, and did not get worse at larger/more complex instance sizes (0/247 misses in
-       the larger-scale configuration). Real numbers recorded in section H below, replacing its
-       "not run yet" placeholder. No code changed as a result — RC-2's rare miss is the expected
-       behavior of a deliberately-over-tight probe, not a defect, and increasing RC's numeric
-       precision was considered and rejected as added risk for no real gain given this result.
+  <!-- v14.1.1 — TWO HOUSEKEEPING FIXES, NO SOLVER/HELPER LOGIC CHANGE.
+       1) CHANGELOG REORDER (documentation only). The v9.0.x-v9.4.0 run of entries had drifted out
+          of chronological order (v9.3.0, v9.2.0, and v9.1.0 were interleaved ahead of v9.0.4, same
+          issue as the earlier v13.4.5/v13.4.6 mix-up). Reordered to v9.0.0/.1/.2/.3/.4 -> v9.1.0 ->
+          v9.2.0 -> v9.3.0 -> v9.4.0; no entry's text changed, only position.
+       2) "(BETA)" LABEL DROPPED FROM HEADER + UI. Parallel search (introduced v14.0, extended v14.1)
+          is graduating from beta soon, so removed the "(beta)" wording from user-facing surfaces
+          ahead of that: the title bar, the h1 version tag, the Parallel-search checkbox label in
+          Advanced settings, the "Solving in parallel…" status line, the recreation-log lines ("main
+          solve (parallel)…" / "parallel search engaged…"), and the result summary's "· parallel xN"
+          tag. Purely cosmetic — #parBeta/#parWorkers ids, _parallelBetaOn(), the kill-switch
+          behavior, and every dated CHANGELOG entry describing v14.0/v14.1 as beta are left exactly
+          as they were (they're a historical record of what shipped at the time).
+  -->
+  <!-- v15.0 — OBJECTIVE FORMATION CALIBRATOR + BENCH OBJECTIVE TOGGLE + SLOW-TIER BENCH GUARANTEE FIX.
+       Three independent changes:
+
+       1) FORMATION CALIBRATOR (replaces the subjective per-position FW weight grid with an objective
+          ranking). See section L below for the key insight and why every earlier attempt at ranking
+          formations (manual FW tuning, and an abandoned draft-simulation calibrator) never converged
+          on anything trustworthy. Short version: _buildGoldPool() pulls each Gold-DB player's TRUE
+          PRIMARY position (not their full eligible-position list from the live DB), _fcalCardValue()
+          values them with the already-fitted no-hold card weights scaled by each factor's rarity (a
+          rare nation earns close to the full newNat weight; a common one earns almost none), then
+          _fcalibrateAnalytic() buckets players by primary position and takes a rank-decayed weighted
+          average of the top X per bucket (_FCAL_DECAY=0.85 per rank, so rank 30 barely moves the
+          number even at large X). A formation's score is the mean of its 11 slots' positional values.
+          Gated behind the existing no-hold weight calibration (Helper tab) — runFormCalibration()
+          refuses with a clear message if NOHOLD_CAL.weights isn't set yet, same discipline as the
+          no-hold calibrator's own stale/missing-calibration guard.
+             - Default "depth per position" (topX) raised from 3 to 15. Under the OLD flat top-X mean
+               (no decay) anything past ~5 would dilute a genuinely strong position down toward its
+               depth, so 3 was a deliberately conservative floor. With decay-weighted averaging that
+               failure mode is gone — rank 15 contributes 0.85^14 ≈ 11% of a rank-1 card's weight — so
+               15 gives a materially deeper read on positional depth for negligible distortion, and is
+               now the default. The input is otherwise uncapped beyond a 500 sanity ceiling (was
+               clamped to 20 under the old flat-mean scheme, where a larger X was actively harmful).
+          Also fixed: the working analytic implementation above had a dead duplicate sitting later in
+          the file (leftover from the abandoned draft-simulation approach) that redefined
+          runFormCalibration/clearFormCalibration/_renderFormCalResult and called a function
+          (_fcalibrateAsync) that was never defined anywhere in this file — clicking "Calibrate
+          formations" would have thrown, since JS's last-function-wins semantics meant the working
+          version was being silently shadowed. Deleted the dead block entirely (~55 lines) rather than
+          fix it forward — the analytic approach it was trying to be is a strictly better fit for this
+          problem (section L), and the UI never exposed the simulation-only controls
+          (#formCalTrials/#formCalDraw/#formCalSeed/#useFormCal) that dead code needed anyway.
+
+       2) BENCH OBJECTIVE TOGGLE ("Optimise expected value" checkbox, Helper tab, default OFF). Bench
+          picking previously always maximised the lexicographic key [c2, c1] — the count of distinct
+          manager PERSONS the bench can rescue to +2, tiebroken by +1 count — across every depth tier
+          (vfast/lite/fast/slow). Since the game deals 5 managers without replacement and you keep the
+          best offer, P(at least one +2 offered) is strictly monotone in that rescued-to-+2 count, so
+          this was already "maximise your +2 odds" — a real, defensible objective, just not the only
+          one. The new checkbox adds a second: true expected manager gain
+          E = P(best offer = +2)*2 + P(best offer >= +1)*1, computed via the no-replacement
+          hypergeometric _pNoHit(K) = prod_{i=0..4}(N-K-i)/(N-i). These can genuinely disagree
+          (+9-rescued-to-+2 with +40-to-+1 beats +10/+0 on EV but loses the pure +2 gamble), so this is
+          a real choice, not a strict upgrade — left off by default since "gamble for the +2" is the
+          more common intent. Both objectives now flow through one benchKey() so the checkbox steers
+          every tier uniformly instead of needing separate wiring per tier.
+
+       3) SLOW-TIER BENCH GUARANTEE FIX (found while wiring benchKey() through the slow path). The
+          bench coverage sub-solve's remainingCap was unconditionally sliced to SAMPLE_SLICE, including
+          in Very Slow mode — meaning the tier documented as "exhaustive / proven best" could silently
+          truncate a combo's rescue sub-solve past 30k nodes, undercounting that combo's c2/c1 and
+          potentially handing the argmax to a worse combo. Slow mode now gives each combo's sub-solve
+          the FULL remaining bench budget, and a capped sub-solve now correctly marks the whole run
+          capped (previously it didn't, so a silently-truncated slow run looked identical to a real
+          proof). Added a coverage() memo (_covMemo, keyed by sorted extra-card ids) alongside this,
+          since Slow's rounds + polish pass frequently re-solve identical extra-sets — pure
+          performance, no behavior change.
+  -->
+  <!-- v15.1 — FORMATION CALIBRATION NO LONGER HARD-BLOCKED ON A MANUAL WEIGHT CALIBRATION. runFormCalibration()
+       used to refuse outright (warning + bail) if NOHOLD_CAL.weights wasn't set, on the theory that the
+       user should run + see "Calibrate from DB" themselves first. That created a real UI dead-end: formation
+       ranking and live no-hold pick-time ranking are actually independent (formation calibration only ever
+       READS NOHOLD_CAL.weights — it never reads or flips the "No-hold drafting" checkbox that governs live
+       picking), so anyone who wanted objective formation ranking WITHOUT turning on no-hold drafting had no
+       path to get there. Now: if the weights aren't fitted yet, runFormCalibration() auto-fits them first
+       with the same fast default "Calibrate from DB" itself defaults to (150 simulated drafts, auto/DB-hash
+       seed) — quick, and good enough to rank formations by — then proceeds with formation calibration exactly
+       as before. This does NOT touch the No-hold drafting checkbox or _calActive() at all, so live pick-time
+       ranking stays exactly as the user left it; only NOHOLD_CAL.weights gets populated (and persisted, same
+       as a manual run) as a side effect. Anyone who wants a hand-tuned or larger-sample fit can still run
+       "Calibrate from DB" themselves beforehand — that still takes precedence, since this only fires when
+       NOHOLD_CAL.weights is missing entirely, never when it already exists.
+  -->
+  <!-- v15.1.2 — Simplified the "Optimise expected value" bench-checkbox helper text (Helper tab) to a
+       single short line. Text only, no logic changed.
+  -->
+  <!-- v15.1.3 — Documentation only, no logic changed. Two things considered and deliberately left
+       as-is, now commented in place so they aren't re-litigated later: (1) bench/manager mini-solves
+       (computeBenchPicks/analyzeManagerDepth) never use the parallel-worker path even past 150M nodes
+       — extending it there would mean converting several synchronous call sites to async for
+       marginal value, given how deep a per-tie search already has to be to matter. (2) the OOP
+       emergency-fill path never runs a full manager-depth analysis pass (bench sub-picks only) —
+       not because the OOP slot's filler is unknown, but because of the Prem-dominance design already
+       fully analyzed in the FOR FUTURE MAINTAINERS section E/F above; the OOP comment now cross-
+       references those instead of re-deriving the "Prem always wins" reasoning from scratch, and F
+       gets a pointer back so both sides of the link are findable. Also added a pointer at the top
+       "PATCH NOTE FOR FUTURE EDITORS" block, next to the version-bump convention: before a core-
+       functionality change (formation/slot picking, main solve, bench, manager), read section L's
+       "THE UNDERLYING DRAFT FORMAT" paragraph first. The goal in all three is the same: stop a
+       future pass (AI or human) from re-verifying ground already covered.
+  -->
+  <!-- v15.1.3.1 — CORRECTION to v15.1.3: that pass made three separate doc-only edits (the OOP
+       cross-reference, the section F pointer, and the core-functionality pointer) but only bumped
+       the version once at the start, leaving them all stacked under one version number instead of
+       each getting its own — exactly the mistake the ORDERING note warns about, just applied to
+       "it's only a comment" instead of a logic change. Added a new clarification right next to it
+       (DOC-ONLY EDITS STILL EACH GET THEIR OWN BUMP) spelling that out for next time. No further
+       logic or doc content changed beyond that clarification.
+  -->
+  <!-- v15.1.4 — Documentation only, no logic changed. Added section M to the FOR FUTURE MAINTAINERS
+       block: a process convention for when an arbitrary constant (cap/range/ratio/count) should
+       become a user-facing Advanced setting instead of a fixed number — three tests (risk-free,
+       genuinely consequential, doesn't clutter the common path), with #parWorkers cited as the
+       model to follow. Not everything needs exposing; this is guidance for judging which arbitrary
+       numbers do.
+  -->
+  <!-- v15.1.5 — Documentation only, no logic changed. Clarified sections B and C of the FOR FUTURE
+       MAINTAINERS block: B's harness filenames (test1_tiered.js etc.) are the OLD harness, replaced
+       by section H's differently-named six-file set (which IS shipped, verbatim, in this document's
+       own appendix) — don't waste time searching for the old filenames anywhere. C's numbers are
+       likewise a historical record of what the OLD harness verified, not today's baseline; H's own
+       RESULTS entry is the current one. Nothing removed, only forward-pointers added so this isn't
+       re-discovered by trial and error later.
+  -->
+  <!-- v15.1.6 — Documentation only, no logic changed. Added an "ABOUT THIS APP / DATA SOURCE" note
+       right after the <title> at the very top of the file: this app is for PACWYN, which parallels
+       EA FC but is a distinct game (FC cards as a base + PACWYN-exclusive cards on top), so FC data
+       is a useful but not authoritative reference for the DBs here. Flagging this at the top since
+       it affects how the player/manager DB content should be read/trusted throughout the rest of
+       the file.
+  -->
+  <!-- v15.1.7 — Documentation only, no logic changed. Added section N to the FOR FUTURE MAINTAINERS
+       block: this DB is scoped to PACWYN 26 specifically, built during development. Flags two known,
+       accepted limitations for whoever builds a future 27 DB — (1) GOLD_DB is a temporary stand-in
+       for full-DB primary-position data, Gold-eligible players only; (2) exact-duplicate cards
+       across special editions (e.g. two identical Haaland 98 ST) collapse to one DB entry since a
+       repeat has no UI/solver significance, at the cost of slightly underrepresenting true copy
+       counts. Both are deliberately left unfixed on the 26 DB — not worth hand-patching a DB that
+       will need rebuilding from scratch for 27 anyway — but 27's DB build should capture true
+       primary position per-card from the start.
+  -->
+  <!-- v15.1.8 — Documentation only, no logic changed. Added a READING ORDER note right after the
+       CHANGELOG CONVENTION paragraph at the top: point future readers to the FOR FUTURE MAINTAINERS
+       block (sections A-N) first, since that's the kept-current, durable knowledge, and treat the
+       CHANGELOG blocks as an archive to search for specific past-change detail rather than a
+       front-to-back read. Purely a reading-efficiency note now that the changelog has grown long.
+  -->
+  <!-- v15.1.9 — Documentation only, no logic changed. Added a note to section H (FOR FUTURE
+       MAINTAINERS) after the RESULTS block: a spot-check re-run of fuzz_run_rcsens.js (171 drafts,
+       0/171 soundness mismatches, 0/171 RC-2 misses) is fully consistent with the documented
+       ~1/1,774 RC-2 miss-rate baseline, not evidence of a problem — flagged so a future small
+       spot-check with zero misses isn't mistaken for the positive control failing.
+  -->
+  <!-- v15.1.10 — Documentation only, no logic changed. Added section O to the FOR FUTURE
+       MAINTAINERS block: records a tried-and-rejected experimental per-node UB tightening
+       ("UB-N", a suffix nation-union cap on solveBest()'s pruning bound). Verified sound off-tree
+       (~800 test drafts, 0 mismatches vs. both the original solver and brute force) but produced
+       zero measurable node-count change anywhere tested, since RC+33 already carries enough slack
+       that tightening the smaller nation-diversity term never flips a prune decision. Not merged;
+       written up so this specific tightening isn't re-attempted without the reasoning in hand.
   -->
   <!-- ================================================================================================
        FOR FUTURE MAINTAINERS — KEY REFERENCE MATERIAL (read before major solver/pick-time changes)
@@ -1359,8 +1624,16 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 
        B. SOUNDNESS-TESTING METHODOLOGY (lives in test1_tiered.js + fuzz_gendraft.js +
           bruteforce.js + random_search_verifier.js + engine.js — an external harness, none of it
-          shipped in this file). The short version, for whoever next needs to re-validate a
-          solveBest/scoreXI/maxPossibleRating change:
+          shipped in this file). SUPERSEDED (clarified v15.1.5): these five filenames are the OLD
+          harness — section H replaced all of it with a differently-named six-file set
+          (prod_solver.js/indep_brute.js/fuzz_gen.js/fuzz_run_rcsens.js/forms.json/playerDB.json),
+          which IS shipped, verbatim, in this document's own appendix (see H for exactly where).
+          Don't spend time hunting for test1_tiered.js etc. anywhere — they're not attached here
+          and aren't the current harness. B is kept below only as historical methodology context
+          (the reasoning behind the tiered ground-truth/RC-isolation approach carried forward into
+          H); its OWN numbers in section C are likewise a historical record, not today's baseline
+          — see H's own RESULTS entry for that. The short version, for whoever next needs to
+          re-validate a solveBest/scoreXI/maxPossibleRating change:
             - Ground truth escalates by draft size instead of using one method everywhere: tiny/
               small/medium drafts get an uncapped or generously time-boxed TRUE brute force
               (bruteforce.js — same hold/group-uniqueness constraint as solveBest, but literally no
@@ -1389,7 +1662,10 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
               in this file) — logged to findings_tiered.jsonl with the exact failing draft for
               reproduction via repro_finding_tiered.js.
 
-       C. THIS VERSION'S TESTED-BASELINE STATUS (v12.4.3, unchanged by v12.4.4's doc-only bump) — if
+       C. THIS VERSION'S TESTED-BASELINE STATUS (v12.4.3, unchanged by v12.4.4's doc-only bump) —
+          HISTORICAL RECORD ONLY (clarified v15.1.5): this is what section B's OLD, no-longer-
+          attached harness verified at the time. For today's actual tested-baseline status, see
+          section H's own RESULTS entry instead — don't treat the numbers below as current. If
           a future fuzzing pass finds a miss, check it against this version FIRST: does it
           reproduce here, with these exact harness
           files? If not, the likely explanation is a regression introduced by whatever changed
@@ -1564,6 +1840,13 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
                every hand-duplicated scorer need to be rebuilt," even though the DFS engine and the
                advisory/calibration layers on top of it still don't need to change.
 
+          POINTER (added v15.1.3): the emergency-fill (completeOOP) bench-picks comment — where
+          subPicks is computed just before the "No coverable slots at all" fallback — cites this
+          section (and E) as the reason it never runs a full manager-depth pass on an OOP squad.
+          If F.1 (adding non-Prem normals) is ever actually built, re-check that comment too: an OOP
+          slot's "the real fix might be an unmodeled card" reasoning goes away once non-Prem is
+          modeled, and manager-depth analysis there may become worth adding.
+
        G. CHANGELOG DISCIPLINE (added v13.4.3.1, process convention — not a code/logic entry).
           The v13.4.2-ios "PORT PASS" entry (see the -ios file's changelog) claimed four versions'
           worth of fixes (v13.3/13.4/13.4.1/13.4.2) had been ported across, written by whichever
@@ -1658,6 +1941,19 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
               analyzed above (sections C/D) and ruled out. This closes out section H's "not yet run"
               status; treat the numbers above, not the six-file description further up, as this
               version's tested-baseline status for the replacement harness.
+
+            RE-RUN SPOT-CHECK, SAMPLE-SIZE CAVEAT (added v15.1.9, doc-only): a later spot-check run
+            of fuzz_run_rcsens.js against this version — 171 drafts across all twelve regimes (3M
+            combo ceiling, 10s brute budget) — found 0/171 soundness mismatches and 0/171 RC-2
+            misses. Zero RC-2 misses at this sample size is NOT itself a red flag or a sign the
+            positive control has stopped working: the RESULTS baseline just above puts the RC-2
+            miss rate at ~1/1,774 (0.06%), so at n=171 the expected count is well under 1, and
+            seeing zero is exactly what that baseline predicts. Whoever spot-checks with a smaller,
+            quicker run in the future should weigh the result against the full 1,774-draft
+            baseline's rate before treating "0 RC-2 misses" as notable on its own — it would take a
+            sample size on the order of that baseline (or larger, repeated) before a persistently-
+            zero rate says anything about an actual change in behavior, rather than just being what
+            a ~1-in-1,774 event looks like most of the time at small n.
 
        I. ADDING A NEW DEFAULT_DB ENTRY (added v13.4.4.4, process convention — not a code/logic
           entry). Goal: make new-card entry fast and mechanical, not a source of bikeshedding.
@@ -1770,8 +2066,174 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
           Net assessment: a real but bounded, second-order miscalibration of an optional advisory
           feature, not a significant problem — flagged here so it's remembered rather than
           mistaken for settled ground truth, not because a fix is expected or available.
+
+       L. FORMATION RANKING: WHY FILLABILITY-BASED APPROACHES NEVER WORKED (added v15.0).
+
+          THE UNDERLYING DRAFT FORMAT, for context on why primary position is the right lens here
+          specifically (not an arbitrary simplification): pick a formation -> pick a captain (offered
+          from the board; must be placeable into a position slot you actually have — you can't captain
+          a position absent from your formation) -> pick each formation slot in turn, where each slot's
+          5 options are ALWAYS that slot's PRIMARY position only (a CDM slot is only ever offered
+          primary-CDM players, never a primary-CM player who happens to also play CDM) -> pick the
+          bench, where each of its 5 options can be ANY position, primary or not -> and finally, after
+          the whole squad is drafted, choose 1 of 5 managers offered and keep whichever helps your
+          score most. Two different position rules are live at two different stages, and each half of
+          this app's model matches the stage it represents: formation ranking (this section) mirrors
+          the SLOT-DRAFT stage, where only primary position is ever on offer, so it can only ever be
+          about maximising the chance the best available PRIMARY-position players line up with your
+          slots. The main XI solver (solveBest/scoreXI) mirrors what happens AFTER everything is
+          drafted: once a card is in your pool — whether it arrived via a primary-locked slot pick or
+          an any-position bench pick — where it came from and its primary position stop mattering, and
+          the solver is free to place it in any slot it's eligible for (a CDM/CM card legitimately fills
+          a CM slot in the solved XI, no different from a bench pickup starting instead of a slot pick).
+          That's not a contradiction between the two systems, it's them each being faithful to a
+          different, correctly-scoped stage of the same draft. Bench and final-manager choice matter
+          for one thing beyond XI score: two squads that solve to an IDENTICAL main-XI score can still
+          differ in how many managers their leftover bench can rescue to +1/+2 — since you keep the
+          best of 5 managers offered at the end — which is exactly why bench picking and same-score
+          tiebreaking are the only places bench/manager considerations enter the ranking at all.
+
+          Every earlier attempt to rank formations — the manual FW per-position weight grid, and an
+          abandoned draft-simulation calibrator that got as far as being wired into the UI before
+          being abandoned mid-build — was implicitly testing whether a formation's slots could be
+          FILLED: could this shape complete an XI from a drafted pool, how often, how well. That
+          framing is a category error. Every formation in FORMS has exactly 11 slots, and the pool
+          always has enough eligible cards across all playable positions to fill any of them —
+          fillability is not what distinguishes one formation from another, so anything measuring
+          it converges on noise or on trivial artifacts of pool/draw size, never on a formation's
+          actual quality.
+          What actually distinguishes formations is WHICH POSITIONS HOLD THE BEST CARDS — i.e.
+          which slots maximise the chance that a genuinely elite player's TRUE PRIMARY position
+          lines up with a slot in that formation. A second, related trap: the live playerDB lists
+          every position a card is ELIGIBLE for (Salah as RW/RM/CAM…), so scoring "can this card
+          fill a CM slot" counts a primary-CDM, secondary-CM player (Caicedo) as equally valuable to
+          a CM slot as an actual primary-CM player — inflating CM-heavy formations for players who
+          would never actually be drafted AS a CM. The fix (_buildGoldPool + _fcalibrateAnalytic,
+          this version) sidesteps both traps at once: it never asks "can this formation be filled"
+          at all (fillability is irrelevant and dropped from the model entirely), and it credits
+          each player to their TRUE PRIMARY position only (via GOLD_DB), not their full eligible-
+          position list, so a CDM/CM card only ever strengthens CDM slots.
+
+          WHY FILLABILITY IS TRIVIAL, NOT JUST IRRELEVANT: a formation will essentially always fill.
+          The only thing that can make a fill harder is a bust — losing a slot's committed card mid-
+          board and needing to cover it from the bench instead — and that's a rare, not-formation-
+          specific event, not a reason to weight one shape over another. Fillability-based scoring
+          specifically loves CM: CDM, CM, and CAM players overwhelmingly ALSO list CM as a secondary
+          position (a CDM/CM and a CAM/CM are both extremely common combos), so any metric that credits
+          eligible positions rather than primary ones systematically overweights CM slots purely
+          because more players happen to be ABLE to cover them, not because CM is where the best
+          players actually are. That's the same trap as the Caicedo CDM/CM example above, generalized:
+          "this position is easy to fill" and "this position gets you the best players" are unrelated
+          facts, and fillability only ever measures the former. Even at its theoretical best,
+          fillability only protects against the rare no-full-XI outcome — it says nothing about the
+          MAXIMUM SCORE achievable, which is the actual goal. And the format context matters here too:
+          some modes give unlimited attempts at a board, others (the current one) are best-10-of-40 —
+          in neither case is trading away access to the best available cards worth buying a marginally
+          easier fill. Formation consistency was never something worth prioritising over card quality,
+          and fillability-based scoring had no way to know that.
+
+          FUTURE WORK: GOLD_DB only covers players who have an actual Gold card in-game, so today's
+          formation calibration is scoped to that subset of the full player pool, not the entire
+          live playerDB. The right long-term fix is a PERMANENT, per-entry "true primary position"
+          field on every DB card (not just Gold-eligible ones) — once that exists, _buildGoldPool's
+          dedupe-through-GOLD_DB step becomes unnecessary and _fcalibrateAnalytic can run directly
+          over the full DB, making the ranking materially more accurate (today it undercounts
+          positional depth for any player who's strong but never got a Gold card). Not implemented
+          yet — flagged for whoever adds primary-position data entry to the DB maintenance workflow
+          next.
+
+       M. PHILOSOPHY: WHEN AN ARBITRARY NUMBER SHOULD BECOME AN ADVANCED SETTING (added v15.1.4,
+          process convention — not a code/logic entry). Whenever a change introduces a genuinely
+          arbitrary constant — a cap, a range, a ratio, a count — ask whether it should be a fixed
+          number or a user-facing Advanced-tab option, using three tests together, not any one alone:
+            1. RISK-FREE: exposing it (at any value the UI allows) can't break the main function or
+               produce an invalid/nonsensical result. A slider that can only ever slow a search down
+               or speed it up, never corrupt an answer, passes; a value that could silently violate a
+               solver invariant (e.g. something the branch-and-bound proof in section F depends on)
+               does not — that stays a constant, or gets a narrower validated range, not a free knob.
+            2. GENUINELY CONSEQUENTIAL: a different value could plausibly change the actual result the
+               user sees (search depth, search speed, which tie wins, an included/excluded item) —
+               not just an internal implementation detail invisible either way. If every value in the
+               allowed range converges on the same outcome, exposing it just adds a control nobody's
+               choice ever changes.
+            3. DOESN'T CLUTTER THE COMMON PATH: it lives in Advanced settings (or similarly tucked
+               away), with a sane default so nobody who doesn't care ever has to see or think about
+               it. "Worth adding" is conditional on it staying invisible-by-default, not on making the
+               basic flow more complicated to look at.
+          #parWorkers is the model to follow, not the exception: it's a 2-64 range, not a fixed 4,
+          precisely because worker count passes all three tests (safe at any value in range, can
+          genuinely change how fast a 150M+ solve returns, and sits under an Advanced toggle most
+          users never open). The takeaway for future arbitrary constants: default to giving the user
+          the knob when all three hold, rather than silently picking a number and moving on — but
+          don't manufacture a setting where one of the three fails; not everything needs exposing,
+          and a control that can't fail, can't matter, or can't stay out of the way of the basic flow
+          is a worse choice than just picking a good constant.
+
+       N. THIS DB'S EDITION SCOPE AND TWO KNOWN, ACCEPTED LIMITATIONS (added v15.1.7). The current
+          playerDB was built during development for PACWYN 26 specifically. A future PACWYN 27
+          edition would mean building a new DB anyway (new cards, new pool), and would be a good
+          opportunity to capture more per-card data than 26's DB does — most notably a real
+          PRIMARY position field on every entry, not just Gold-eligible ones, since that's exactly
+          what section L's FUTURE WORK paragraph above says would let _buildGoldPool's workaround
+          be retired instead of scoped to a Gold-only subset.
+
+          Two limitations of the 26 DB, both known and both deliberately left as-is:
+            1. GOLD_DB is a temporary stand-in for full-DB primary-position data (see section L)
+               — it works, but only covers Gold-eligible players, not the entire live pool.
+            2. EXACT-DUPLICATE SKIP ACROSS SPECIAL EDITIONS: two cards that are identical in every
+               field that matters to this app (name, rating, position, club, nation — e.g. two
+               separate special editions both printing a 98-rated Haaland at ST) collapse to one
+               DB entry rather than being stored twice, since a second identical row has no UI or
+               solver significance — every solve behaves exactly the same whether it's counted once
+               or twice. The only cost is that the DB then slightly underrepresents how many actual
+               copies of that card exist across editions, which is cosmetic, not a solver
+               correctness issue.
+          Neither is worth fixing by hand-patching the 26 DB now — that's real effort spent on a
+          DB that's going to need rebuilding from scratch for 27 regardless. Both are flagged here
+          so whoever builds the 27 DB knows to capture primary position per-card from the start
+          (retiring GOLD_DB's role) and can decide then whether tracking true duplicate counts is
+          worth the small added complexity for that edition.
+
+       O. UB-N: A TRIED-AND-REJECTED PER-NODE NATION-CAP TIGHTENING (added v15.1.10, doc-only —
+          records a dead end in solveBest()'s per-node pruning bound, not maxPossibleRating()'s RC
+          ensemble — a different target than section J's UB-I, so a different letter-suffix
+          ("N" for nation) was used to avoid confusion with the UB-A..UB-I names already in use
+          there). MOTIVATION: solveBest()'s per-node bound assumes each of the (N-k) remaining
+          slots can independently contribute a brand-new nation to the "nations" score component,
+          i.e. up to (N-k) new nations from the suffix combined. That's provably loose whenever the
+          union of remaining slots' candidate pools spans fewer distinct nations than there are
+          remaining slots (e.g. a heavily nation-restricted draft) — no completion can add more new
+          nations than physically exist across those pools.
+          IDEA: precompute, once per solveBest() call, a static suffix aggregate distinctNatSuffix[k]
+          = the size of the union of nations across cand[order[k..N-1]] (independent of path/seenNat,
+          so O(1) to look up per node, no live Set diffing needed). At each node, subtract
+          max(0, (N-k) - distinctNatSuffix[k]) from the existing bound — a valid tightening since no
+          completion of the remaining suffix can ever exceed distinctNatSuffix[k] new nations,
+          regardless of which nations happen to already be seen higher up the tree (ignoring that
+          overlap keeps the check static/cheap at the cost of being weaker than the tightest
+          possible version).
+          SOUNDNESS: verified off-tree (prototype not in this file) against both the original
+          solver (uncapped-vs-uncapped best-score equality) and the independent brute-force oracle,
+          combined ~800 drafts across all twelve regimes including a hand-built worst case (1
+          nation across a full 9-slot pool). 0 mismatches anywhere — the tightening is valid.
+          TIGHTNESS: 0 measurable effect. Instrumented directly on the 1-nation/9-slot case: the
+          cap fired 17,885 times during a 676,981-node search, tightening the bound by as much as 7
+          at once — yet the final node count came out byte-identical to the unmodified solver, in
+          every one of the ~800 test drafts, not just this one.
+          WHY, STRUCTURALLY: this cap only ever reduces the nation-diversity portion of the bound,
+          but RC+33 (the rating ceiling plus max possible chemistry) is the dominant term and
+          typically carries enough slack on its own that shaving a few points off a smaller
+          component never brings the total bound under `best`. The nation term was never the thing
+          keeping a branch alive in these instances, so tightening it changes nothing observable —
+          consistent with the general lesson already on record elsewhere in this block (e.g.
+          section G's changelog-honesty point and section J's UB-I writeup): a provably-correct,
+          provably-sound tightening is not automatically a useful one if it targets slack that was
+          never binding. Not merged. If revisited, look for a tightening on the RC/chem side (the
+          actual dominant term) rather than the diversity side, or find an instance regime where
+          diversity, not rating, is the binding constraint on `ub` — neither of which this pass
+          identified.
   -->
-  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v14.0 beta</span></h1>
+  <h1 class="cap">&#11041; Draft Solver <span style="font-size:11px;opacity:.55;font-weight:400;letter-spacing:0">v15.1.10</span></h1>
   <div class="cap sub">pacwyn draft optimiser</div>
   <div style="position:absolute;right:2px;top:40px;text-align:right;font-size:10px;line-height:1.5;color:var(--mut)">Created by <b style="color:var(--ink)">Chenzo</b><br><span style="opacity:.8">Special thanks to BWFCPackfan</span></div>
 </header>
@@ -1781,7 +2243,8 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 <div id="solverBadge">
   <div class="si">&#9881;&#65039;</div>
   <div class="sm2">Solver running&hellip;</div>
-  <div class="sh">Don&rsquo;t tap anything &mdash; it&rsquo;s still going.</div>
+  <div class="sh" id="solverBadgeHint">Don&rsquo;t tap anything &mdash; it&rsquo;s still going.</div>
+  <button id="solverStopBtn" onclick="_stopParallelSolve()" style="display:none;pointer-events:auto;margin-top:8px;width:100%;padding:7px;border-radius:8px;border:1px solid var(--warn);background:transparent;color:var(--warn);font-size:12px;font-weight:700;cursor:pointer">&#9632; Stop</button>
 </div>
 
 <!-- ===================== FORMATION ===================== -->
@@ -1911,16 +2374,21 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
         <input type="checkbox" id="rcAutoOptimal" checked onchange="_toggleAutoRC();saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
         <span><b>Optimal RC</b> &mdash; let the solver pick the ceiling automatically</span>
       </label>
+      <p class="tiny" style="margin:0 0 8px">The highest team rating the solver assumes is reachable &mdash; a <b>speed lever</b>, and the biggest one there is. With <b>Optimal RC</b> on (the default) the solver computes the exact best ceiling for your draft and sets it before every solve &mdash; no guessing, no warnings. Turn it off to drive the slider yourself: a lower ceiling searches far fewer nodes but can miss a better squad, a higher one guarantees completeness but is slower. Left on, you always get the fastest ceiling that&rsquo;s still provably optimal.</p>
+      <div id="ratingCeilWarn" style="display:none;font-size:11px;padding:7px 10px;border-radius:0 7px 7px 0;margin-bottom:8px;background:var(--panel2);border-left:2px solid var(--warn);color:var(--warn)"></div>
       <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:2px 0 8px;cursor:pointer;color:var(--ink)">
         <input type="checkbox" id="skipTies" onchange="saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
         <span><b>Skip ties</b> &mdash; stop at the best score, don&rsquo;t hunt equal-scoring lineups (much faster)</span>
       </label>
       <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:2px 0 8px;cursor:pointer;color:var(--ink)">
         <input type="checkbox" id="parBeta" checked onchange="saveAdvSettings()" style="width:auto;margin:0;accent-color:var(--cyan)">
-        <span><b>Parallel search</b> <span style="color:var(--mut)">(beta)</span> &mdash; on 150M+ drafts only, split the search across CPU workers. Same answer, roughly &divide;workers wall-clock. Untick if anything looks off.</span>
+        <span><b>Parallel search</b> &mdash; on 150M+ drafts only, split the search across CPU workers. Same answer, roughly &divide; workers wall-clock. Untick if anything looks off.</span>
       </label>
-      <p class="tiny" style="margin:0">The highest team rating the solver assumes is reachable &mdash; a <b>speed lever</b>, and the biggest one there is. With <b>Optimal RC</b> on (the default) the solver computes the exact best ceiling for your draft and sets it before every solve &mdash; no guessing, no warnings. Turn it off to drive the slider yourself: a lower ceiling searches far fewer nodes but can miss a better squad, a higher one guarantees completeness but is slower. Left on, you always get the fastest ceiling that&rsquo;s still provably optimal.</p>
-      <div id="ratingCeilWarn" style="display:none;font-size:11px;padding:7px 10px;border-radius:0 7px 7px 0;margin-top:8px;background:var(--panel2);border-left:2px solid var(--warn);color:var(--warn)"></div>
+      <div style="margin:2px 0 8px 26px">
+        <label style="font-size:11px;color:var(--mut);display:flex;justify-content:space-between"><span>Workers</span><span id="parWorkersLbl">4</span></label>
+        <input type="range" id="parWorkers" min="2" max="64" value="4" oninput="$('#parWorkersLbl').textContent=this.value" onchange="saveAdvSettings()" style="width:100%">
+        <p class="tiny" style="margin:2px 0 0">Past your device&rsquo;s core count this stops helping and some devices won&rsquo;t handle the top end well.</p>
+      </div>
       <div style="margin-top:14px">
         <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Solver Node Cap (millions)</label>
         <input type="number" id="nodeCapInput" min="1" value="5" inputmode="numeric" style="width:100%" onblur="clampNodeCap(this);saveAdvSettings()">
@@ -1947,13 +2415,17 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
       <div style="margin-top:14px">
         <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Bench analysis depth</label>
         <select id="benchMode" style="width:100%" onchange="saveAdvSettings();_solveCache=null;">
-          <option value="vfast" selected>Very Fast &mdash; instant heuristic pick</option>
-          <option value="lite">Fast &mdash; solves the top two heuristic picks per hold</option>
-          <option value="fast">Medium &mdash; every candidate solved, hold by hold</option>
-          <option value="medium">Slow &mdash; ordered holds, complementarity-aware</option>
-          <option value="slow">Very Slow &mdash; fully exhaustive (not recommended)</option>
+          <option value="vfast" selected>Very Fast &mdash; instant heuristic pick, no solving</option>
+          <option value="lite">Fast &mdash; solver-checks the top two heuristic candidates per hold</option>
+          <option value="fast">Medium &mdash; solver-checks every candidate, hold by hold</option>
+          <option value="medium">Slow &mdash; ordered holds, commits the most complementary coverage each round</option>
+          <option value="slow">Very Slow &mdash; exhaustive: every candidate combination (proven best, can be very slow)</option>
         </select>
         <p class="tiny" style="margin:4px 0 0">Controls only how hard the <b>bench picks</b> are searched &mdash; it never changes your starting XI. Higher tiers add confidence, rarely a different answer. <b>Very Slow</b> can be extremely slow on complex drafts for little benefit.</p>
+        <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:8px 0 0;cursor:pointer;color:var(--ink)">
+          <input type="checkbox" id="benchObjEV" onchange="saveAdvSettings();_solveCache=null;" style="width:auto;margin:0;accent-color:var(--cyan)">
+          <span><b>Optimise expected value</b> &mdash; calculates the best average manager gain, rather than going for the best chance to get +2. Default off.</span>
+        </label>
         <div style="margin-top:10px">
           <label style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:block">Bench Node Cap (millions)</label>
           <input type="number" id="benchNodeCapInput" min="1" value="3" inputmode="numeric" style="width:100%" onblur="clampNodeCap(this);saveAdvSettings()">
@@ -2075,6 +2547,17 @@ details.hlp p{font-size:12px;color:var(--mut);margin:8px 0 0;line-height:1.55}
 
   <div class="panel">
     <details class="hlp"><summary>Formation weights</summary>
+      <div id="formCalWrap" style="margin:6px 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:rgba(120,140,255,.05)">
+        <div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Objective formation ranking</div>
+        <p class="tiny" style="margin:0 0 7px">Ranks formations by which positions hold the best players. Uses your calibrated card weights (Helper tab); auto-fits a quick default if you haven&rsquo;t calibrated those yet. While calibrated, this replaces the manual weights below; <b>Clear</b> restores them.</p>
+        <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);margin:0 0 8px">Depth per position: <input type="number" id="formCalTopX" value="15" min="1" max="500" step="1" style="width:75px;padding:3px 6px;font-size:12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)"></label>
+        <div class="row">
+          <button class="btn sec sm" id="formCalBtn" onclick="runFormCalibration()">Calibrate formations</button>
+          <button class="btn gho sm" onclick="clearFormCalibration()">Clear</button>
+        </div>
+        <div id="formCalStatus" class="tiny" style="margin-top:7px"></div>
+        <div id="formCalResult" style="margin-top:7px"></div>
+      </div>
       <div id="fwGrid" style="margin-top:6px"></div>
       <button class="btn gho sm" style="margin-top:8px" onclick="resetFW()">Reset to defaults</button>
       <span class="tiny" style="margin-left:8px;color:var(--mut)">Tap &plusmn; to flip the sign &mdash; negative values make the position unwanted</span>
@@ -2561,8 +3044,8 @@ function _clearSolve(){lastSolve=null;window._solved=null;window._solveCtx=null;
    Stamped into lastSolve (settings/steps) at applyTie/emergency time, so it persists through
    save/export/restore with everything else and refreshLog can print it. */
 let _recActions=[],_recBase=null,_recCurSettings=null;
-function _recSnapshot(){return {rc:getRatingCeil(),capM:Math.round(getNodeCap()/1000000),benchCapM:Math.round(getBenchNodeCap()/1000000),mgrCapM:Math.round(getMgrNodeCap()/1000000),target:_targetScore()||0,bench:_benchMode(),mgrDepth:_mgrFrac(),skipTies:_skipTies(),divPct:_divPct(),shuffles:_shuffleCount()};}
-function _recFmtSettings(s){return 'RC '+s.rc+' \u00b7 node cap '+s.capM+'M \u00b7 bench cap '+s.benchCapM+'M \u00b7 mgr cap '+s.mgrCapM+'M \u00b7 target '+(s.target?s.target:'off')+' \u00b7 bench speed '+s.bench+' \u00b7 mgr depth '+(typeof s.mgrDepth==='number'?s.mgrDepth.toFixed(2):s.mgrDepth)+' \u00b7 skip ties '+(s.skipTies?'on':'off')+' \u00b7 diversity '+(s.shuffles?(s.divPct+'%/'+s.shuffles+'sh'):'off');}
+function _recSnapshot(){return {rc:getRatingCeil(),capM:Math.round(getNodeCap()/1000000),benchCapM:Math.round(getBenchNodeCap()/1000000),mgrCapM:Math.round(getMgrNodeCap()/1000000),target:_targetScore()||0,bench:_benchMode(),benchEV:_benchObjEV(),mgrDepth:_mgrFrac(),skipTies:_skipTies(),divPct:_divPct(),shuffles:_shuffleCount(),parBeta:_parallelBetaOn(),parWorkers:_parWorkerCount()};}
+function _recFmtSettings(s){return 'RC '+s.rc+' \u00b7 node cap '+s.capM+'M \u00b7 bench cap '+s.benchCapM+'M \u00b7 mgr cap '+s.mgrCapM+'M \u00b7 target '+(s.target?s.target:'off')+' \u00b7 bench speed '+s.bench+' \u00b7 bench obj '+(s.benchEV?'EV':'+2')+' \u00b7 mgr depth '+(typeof s.mgrDepth==='number'?s.mgrDepth.toFixed(2):s.mgrDepth)+' \u00b7 skip ties '+(s.skipTies?'on':'off')+' \u00b7 diversity '+(s.shuffles?(s.divPct+'%/'+s.shuffles+'sh'):'off')+' \u00b7 parallel '+(s.parBeta?('on/'+s.parWorkers+'w'):'off');}
 function _recNoteSettingsDrift(){
   const cur=_recSnapshot();
   if(_recCurSettings){
@@ -2573,9 +3056,11 @@ function _recNoteSettingsDrift(){
     if(cur.mgrCapM!==p.mgrCapM)d.push('mgr cap '+p.mgrCapM+'M\u2192'+cur.mgrCapM+'M');
     if(cur.target!==p.target)d.push('target '+(p.target||'off')+'\u2192'+(cur.target||'off'));
     if(cur.bench!==p.bench)d.push('bench speed '+p.bench+'\u2192'+cur.bench);
+    if(cur.benchEV!==p.benchEV)d.push('bench obj '+(p.benchEV?'EV':'+2')+'\u2192'+(cur.benchEV?'EV':'+2'));
     if(cur.mgrDepth!==p.mgrDepth)d.push('mgr depth '+p.mgrDepth.toFixed(2)+'\u2192'+cur.mgrDepth.toFixed(2));
     if(cur.skipTies!==p.skipTies)d.push('skip ties '+(p.skipTies?'on':'off')+'\u2192'+(cur.skipTies?'on':'off'));
     if(cur.divPct!==p.divPct||cur.shuffles!==p.shuffles)d.push('diversity '+(p.shuffles?(p.divPct+'%/'+p.shuffles+'sh'):'off')+'\u2192'+(cur.shuffles?(cur.divPct+'%/'+cur.shuffles+'sh'):'off'));
+    if(cur.parBeta!==p.parBeta||cur.parWorkers!==p.parWorkers)d.push('parallel '+(p.parBeta?('on/'+p.parWorkers+'w'):'off')+'\u2192'+(cur.parBeta?('on/'+cur.parWorkers+'w'):'off'));
     if(d.length)_recActions.push('settings changed: '+d.join(', '));
   }
   _recCurSettings=cur;
@@ -3794,6 +4279,7 @@ function solveBest(form,cards,nodeCap,ratingCeil,seedBest,seedXIs,skipTies,diver
 // failure, Worker unavailability, or an error result falls back to the serial path cleanly.
 // Diversity modes are intentionally NOT combined with the parallel path in this beta.
 function _parallelBetaOn(){const cb=$('#parBeta');return !!(cb&&cb.checked);}
+function _parWorkerCount(){const el=$('#parWorkers');const v=el?parseInt(el.value,10):4;return(isNaN(v)||v<2)?2:Math.min(v,64);}
 function _buildSolverWorkerBlob(){
   const src=[futRatingRaw,leagueOf,trueChem,scoreXI,solveBest].map(f=>f.toString()).join('\n')
     +'\nonmessage=function(e){const d=e.data;'
@@ -3802,6 +4288,7 @@ function _buildSolverWorkerBlob(){
     +'postMessage({best:r.best,bestXIs:(r.bestXIs||[]).map(x=>({xi:x.xi,sc:x.sc})),nodes:r.nodes,capped:!!r.capped,maxRating:r.maxRating,error:r.error||null});};';
   return URL.createObjectURL(new Blob([src],{type:'application/javascript'}));
 }
+let _parRun=null; // current parallel run's stoppable state, or null when none is active
 function _runSolveParallel(cap,ratingCeil,reuseSeed){
   const out=$('#solveOut');
   const form=FORMS.find(f=>f.name===chosenForm),t0=performance.now();
@@ -3819,24 +4306,28 @@ function _runSolveParallel(cap,ratingCeil,reuseSeed){
   const candLists=form.slots.map(s=>sortedCards.filter(c=>c.pos.includes(s)));
   const order=form.slots.map((s,i)=>i).sort((a,b)=>candLists[a].length-candLists[b].length);
   const rootCands=candLists[order[0]];
-  const W=Math.max(2,Math.min(4,(navigator.hardwareConcurrency||4)-1,rootCands.length));
+  const W=Math.max(2,Math.min(_parWorkerCount(),rootCands.length));
   const parts=Array.from({length:W},()=>[]);
   rootCands.forEach((c,i)=>parts[i%W].push(c.id));
   const perCap=Math.max(1,Math.ceil(cap/W));
   let url=null;
   try{url=_buildSolverWorkerBlob();}catch(e){url=null;}
   if(!url||typeof Worker==='undefined'){_runSolveInner(cap,ratingCeil,reuseSeed);return;} // no worker support -> serial fallback, identical result
-  const results=[];let doneCt=0,failed=false;
-  const workers=parts.map((ids,wi)=>{
+  const run={url,workers:[],results:[],doneCt:0,failed:false,stopped:false,total:parts.length};
+  _parRun=run;
+  const sb=$('#solverStopBtn');if(sb)sb.style.display='block';
+  const teardown=()=>{run.workers.forEach(x=>{try{x&&x.terminate();}catch(e){}});try{URL.revokeObjectURL(run.url);}catch(e){}
+    if(sb)sb.style.display='none'; if(_parRun===run)_parRun=null;};
+  run.workers=parts.map((ids,wi)=>{
     let w;
     try{w=new Worker(url);}catch(e){return null;}
-    w.onerror=function(){ if(failed)return; failed=true; workers.forEach(x=>{try{x&&x.terminate();}catch(e){}});
-      try{URL.revokeObjectURL(url);}catch(e){} _runSolveInner(cap,ratingCeil,reuseSeed); }; // any worker failure -> clean serial fallback
+    w.onerror=function(){ if(run.failed||run.stopped)return; run.failed=true; teardown(); _runSolveInner(cap,ratingCeil,reuseSeed); }; // any worker failure -> clean serial fallback
     w.onmessage=function(e){
-      results[wi]=e.data;doneCt++;
-      if(doneCt===parts.length&&!failed){
-        workers.forEach(x=>{try{x&&x.terminate();}catch(e){}});try{URL.revokeObjectURL(url);}catch(e){}
-        _finishParallel(results,form,sortedCards,cap,ratingCeil,t0,out,W,perCap);
+      if(run.stopped)return;
+      run.results[wi]=e.data;run.doneCt++;
+      if(run.doneCt===run.total&&!run.failed){
+        teardown();
+        _finishParallel(run.results,form,sortedCards,cap,ratingCeil,t0,out,W,perCap);
       }
     };
     w.postMessage({form:{name:form.name,slots:form.slots.slice()},cards:sortedCards,nodeCap:perCap,
@@ -3844,7 +4335,26 @@ function _runSolveParallel(cap,ratingCeil,reuseSeed){
       skipTies:_skipTies(),rootAllowIds:ids});
     return w;
   });
-  if(workers.some(w=>!w)){ if(!failed){failed=true;workers.forEach(x=>{try{x&&x.terminate();}catch(e){}});try{URL.revokeObjectURL(url);}catch(e){}_runSolveInner(cap,ratingCeil,reuseSeed);} }
+  if(run.workers.some(w=>!w)){ if(!run.failed&&!run.stopped){run.failed=true;teardown();_runSolveInner(cap,ratingCeil,reuseSeed);} }
+}
+function _stopParallelSolve(){
+  const run=_parRun; if(!run||run.stopped)return;
+  run.stopped=true;
+  const partial=run.results.slice();
+  run.workers.forEach(x=>{try{x&&x.terminate();}catch(e){}});
+  try{URL.revokeObjectURL(run.url);}catch(e){}
+  const sb=$('#solverStopBtn');if(sb)sb.style.display='none';
+  _parRun=null;
+  _hideSolverOverlay();
+  const out=$('#solveOut');
+  const got=partial.filter(Boolean);
+  let best=-1,bestXIs=[];
+  for(const r of got){ if(r.best>best){best=r.best;bestXIs=r.bestXIs.slice();} }
+  if(best<0){ if(out)out.innerHTML='<div class="note" style="color:var(--mut)">Stopped \u2014 no result yet.</div>'; _clearSolve(); refreshLog(); return; }
+  if(out)out.innerHTML='<div class="note" style="color:var(--warn)">\u25a0 Stopped early \u2014 best found so far: <b>'+best+'</b> ('+got.length+'/'+partial.length+' workers reported). Not proven optimal.</div>';
+  window._solveCtx={r:{best,bestXIs,capped:true,stoppedEarly:true},form:FORMS.find(f=>f.name===chosenForm)};
+  _recLog&&_recLog('parallel search stopped by user \u2014 best so far '+best);
+  refreshLog();
 }
 function _finishParallel(results,form,sortedCards,cap,ratingCeil,t0,out,W,perCap){
   if(results.some(r=>r&&r.error)){_runSolveInner(cap,ratingCeil,false);return;} // e.g. no-eligible-card edge: let the serial path produce the canonical error UI
@@ -4204,6 +4714,15 @@ function _renderEmergencyFillInner(form,cap){
       _benchNodeAcc=0;_slowConfirmed=false;_benchAbort=false;_benchTieIdx=1;_benchTieTotal=1;_mgrNodeAcc=0;_mgrPromptConfirmed=true;_mgrAbort=false;_mgrTieIdx=1;_mgrTieTotal=1; // same reset _analyzeTies does before calling computeBenchPicks (manager prompt pre-confirmed: single squad)
       const bd=computeBenchPicks(tie,em.subForm,_benchMode());
       subPicks=bd.subPicks;benchCapped=!!bd.capped;
+      // v15.1.3 (documentation only): intentionally NO analyzeManagerDepth() pass here — only bench
+      // sub-picks. Not an oversight, and not really about the OOP slot's card being "unknown" either.
+      // The card model only ever represents Prem-club normal/hero/icon — the Prem-dominance design
+      // decision baked in since v1.0 (why non-Prem was never modeled) is ALREADY fully analyzed in
+      // the "FOR FUTURE MAINTAINERS" reference block above, sections E (pivot-choice research) and F
+      // (scrutiny map for adding non-Prem normals) — re-read those before re-deriving this again.
+      // The point specific to THIS path: an emergency-fill slot exists precisely because no modeled
+      // card is legal there, so the user's real fix may be a card this app has no representation of
+      // at all — a manager-rescue count against our own placeholder squad wouldn't be honest.
     } else {
       // No coverable slots at all (every position uncoverable) — nothing for the real solver to
       // scope a sub-search to, fall back to the flat rating+diversity heuristic.
@@ -4355,7 +4874,7 @@ function saveAdvSettings(){
     const ar=$('#rcAutoOptimal');
     const bnc=$('#benchNodeCapInput'),mnc=$('#mgrNodeCapInput'),hnc=$('#helperNodeCapInput');
     const dp=$('#divPctSlider'),sc=$('#shuffleCount');
-    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true, skipTies:(($('#skipTies')||{}).checked||false),parBeta:(($('#parBeta')||{checked:true}).checked!==false),divPct:dp?dp.value:undefined,shuffleCount:sc?sc.value:undefined,benchNodeCap:bnc?bnc.value:undefined,mgrNodeCap:mnc?mnc.value:undefined,helperNodeCap:hnc?hnc.value:undefined};
+    const d={ratingCeil:rc?rc.value:undefined,nodeCap:nc?nc.value:undefined,benchMode:bm?bm.value:undefined,mgrDepth:md?md.value:undefined,rcAuto:ar?ar.checked:true, skipTies:(($('#skipTies')||{}).checked||false),benchObjEV:(($('#benchObjEV')||{}).checked||false),parBeta:(($('#parBeta')||{checked:true}).checked!==false),parWorkers:(($('#parWorkers')||{value:'4'}).value),divPct:dp?dp.value:undefined,shuffleCount:sc?sc.value:undefined,benchNodeCap:bnc?bnc.value:undefined,mgrNodeCap:mnc?mnc.value:undefined,helperNodeCap:hnc?hnc.value:undefined};
     localStorage.setItem(_ADV_SAVE_KEY,JSON.stringify(d));
   }catch(e){}
 }
@@ -4381,7 +4900,9 @@ function saveAdvSettings(){
     if(saved.rcAuto!==undefined){const ar=$('#rcAutoOptimal');if(ar)ar.checked=!!saved.rcAuto;}
     
     if(saved.skipTies!==undefined){var _st=$('#skipTies'); if(_st)_st.checked=!!saved.skipTies;}
+    if(saved.benchObjEV!==undefined){var _bev=$('#benchObjEV'); if(_bev)_bev.checked=!!saved.benchObjEV;}
     if(saved.parBeta!==undefined){var _pb=$('#parBeta'); if(_pb)_pb.checked=!!saved.parBeta;}
+    if(saved.parWorkers!==undefined){var _pw=$('#parWorkers'); if(_pw){_pw.value=saved.parWorkers;var _pwl=$('#parWorkersLbl');if(_pwl)_pwl.textContent=_pw.value;}}
     if(saved.divPct!==undefined||saved.shuffleCount!==undefined){
       if(saved.divPct!==undefined){var _dp=$('#divPctSlider'); if(_dp)_dp.value=saved.divPct;}
       if(saved.shuffleCount!==undefined){var _sc=$('#shuffleCount'); if(_sc)_sc.value=saved.shuffleCount;}
@@ -4410,6 +4931,8 @@ function resetAdvSettings(){
   const sc=$('#shuffleCount');if(sc)sc.value=0;        // 0 shuffle passes (diversity off)
   const ts=$('#targetScore');if(ts)ts.value='';        // target off
   const pb=$('#parBeta');if(pb)pb.checked=true;       // parallel beta default on (150M+ only)
+  const bev=$('#benchObjEV');if(bev)bev.checked=false; // v15.0: EV objective default OFF (+2 gamble)
+  const pw=$('#parWorkers');if(pw){pw.value='4';const pwl=$('#parWorkersLbl');if(pwl)pwl.textContent='4';}
   if(typeof updateRatingCeilLabel==='function')updateRatingCeilLabel();
   saveAdvSettings();_solveCache=null;
 }
@@ -4590,10 +5113,10 @@ function runSolve(nodeCap,reuseSeed){runSolve.__reuse=!!reuseSeed;
         // mirror _proceed's commit sequence exactly (auto-RC snap BEFORE log snapshot, etc. — see
         // its comment above), only the inner runner differs.
         _applyAutoRC();
-        if(nodeCap)_recLog('main solve (parallel beta): '+_recCapTxt(cap));else{_recReset();_recLog('parallel search (beta) engaged \u2014 150M+ draft');}
+        if(nodeCap)_recLog('main solve (parallel): '+_recCapTxt(cap));else{_recReset();_recLog('parallel search engaged \u2014 150M+ draft');}
         _clearSolve();refreshLog();
         _showSolverOverlay();
-        out.innerHTML='<div class="note" style="color:var(--mut)">\u23f3 Solving in parallel (beta)\u2026 ('+Math.round(cap/1000000)+'M node cap split across workers)</div>';
+        out.innerHTML='<div class="note" style="color:var(--mut)">\u23f3 Solving in parallel\u2026 ('+Math.round(cap/1000000)+'M node cap split across workers)</div>';
         setTimeout(()=>_runSolveParallel(cap,getRatingCeil(),runSolve.__reuse),30);
         return;
       }
@@ -5673,6 +6196,12 @@ function _isIconPremMgr(m){return m.league==='Icons'||m.league==='England Premie
 let _benchNodeAcc=0,_slowConfirmed=false,_benchAbort=false,_benchTotalCombos=null,_benchTieIdx=0,_benchTieTotal=0;
 let _mgrNodeAcc=0,_mgrPromptConfirmed=false,_mgrAbort=false,_mgrTieIdx=0,_mgrTieTotal=0; // manager pass meter — same currency+prompt system as the bench pass, because with all ties analysed at medium/slow, N ties x the per-tie cap has exactly the same blow-up shape the bench had // bench-only node budget guard (10M prompt below); manager checks are entirely separate and never touch this
 function _benchMode(){const el=$('#benchMode');return el&&el.value?el.value:'vfast';}
+// v15.0: bench objective toggle. OFF (default) = pure "+2 gamble" — maximise the deduped count of
+// manager persons the bench can rescue to +2 (lexicographic [c2,c1]). ON = maximise the true
+// EXPECTED manager gain across the 5 offers you're dealt (see _covE where this is consumed). The
+// checkbox steers EVERY bench tier including Very Slow, because both objectives flow through the one
+// benchKey() the argmax in each tier now uses.
+function _benchObjEV(){const cb=$('#benchObjEV');return !!(cb&&cb.checked);}
 function _mgrFrac(){const el=$('#mgrDepth');const v=el?parseFloat(el.value):0;return isFinite(v)?Math.min(1,Math.max(0,v)):0;}
 // Geometric (not linear) interpolation between 0 and total: depthN = total^f. Endpoints are
 // unchanged (f=0 -> 0, f=1 -> total), but the curve is front-loaded for SMALL tie counts (e.g. going
@@ -5715,6 +6244,19 @@ function _maybeSlowPrompt(){
   }
 }
 function computeBenchPicks(tie,form,mode){
+  // v15.1.3 (documentation only, considered + declined): unlike the main solve, this (and
+  // analyzeManagerDepth() below) NEVER uses _runSolveParallel/Workers, no matter how large
+  // _benchCap/_mgrCap get escalated to (even past 150M via "keep searching"), and regardless of
+  // bench mode including Very Slow. _runSolveParallel is deliberately the ONLY entry point to the
+  // parallel path (see its v14.0 comment) and every solveBest() call in this file's bench/manager
+  // section runs single-threaded and synchronous by design. Checked what it'd take to extend
+  // parallelism here: computeBenchPicks/analyzeManagerDepth are called synchronously in tight loops
+  // across every tied XI (_analyzeTies, _pickTieWinner, the emergency-fill renderer, pickMgr), each
+  // with its own progress counters/abort buttons/cap-escalation flows that assume synchronous
+  // completion — parallelizing would mean converting all of those call sites to async, a real
+  // refactor with real bug surface, not a contained change. Decided against it: a per-tie bench or
+  // manager search that's already deep enough to want 150M+ nodes is reaching the point of
+  // excessiveness for what a tiebreaker or an OOP squad's insurance picks actually need.
   mode=mode||_benchMode();
   const _entryAborted=_benchAbort;   // tie analysed after a user stop -> mark it, don't call it capped
   const _fnNodeStart=_benchNodeAcc;  // actual nodes searched during THIS call (each combo triggers its own solveBest(), so combo-count alone understates the real work)
@@ -5764,6 +6306,7 @@ function computeBenchPicks(tie,form,mode){
   const xiPool=slotCards.map(c=>Object.assign({},c,{hold:null}));
   const singlePool=singles.map(c=>Object.assign({},c,{hold:null}));
   let _bcapped=false,_combosChecked=0n,_unitsDone=0;
+  const _covMemo={}; // v15.0: per-bench-solve memo of coverage({extra}) results, keyed by sorted card ids
   // Unlike slow mode's combo count, fast/medium don't walk the full cross-product, so there's no
   // natural "combo" unit to extrapolate from. But both process the search in exactly `holds.length`
   // discrete steps regardless of the cards involved — fast does one hold's candidate-loop per step,
@@ -5789,8 +6332,16 @@ function computeBenchPicks(tie,form,mode){
     // even at 2M nodes (last improvement p50≈1.1M), so per-combo truncation is unavoidable — sampling
     // is the honest model. With a fixed slice, a bigger budget buys proportionally MORE sampled combos,
     // and avg-nodes-per-sample is stable, so the finish estimate is cap-independent and comparable.
+    // v15.0: the slice now applies to the HEURISTIC tiers only. Very Slow is the guarantee tier —
+    // truncating its per-combo sub-solves silently broke that guarantee (a rescue arrangement past
+    // 30k nodes was invisible, so c2/c1 could undercount and the argmax could be wrong). In slow
+    // mode each combo's sub-solve gets the full remaining bench budget; if none of them cap, the
+    // enumeration is exact and the reported best bench is the PROVEN best. A capped sub-solve still
+    // marks the whole run capped (the existing escalation prompts handle raising the budget).
     const SAMPLE_SLICE=30000;
-    const remainingCap=Math.max(1,Math.min(SAMPLE_SLICE,_benchCap-spent));
+    const remainingCap=Math.max(1,(mode==='slow')?(_benchCap-spent):Math.min(SAMPLE_SLICE,_benchCap-spent));
+    const _memoKey=extra.map(c=>c.id).sort((a,b)=>a-b).join(',');
+    if(_covMemo[_memoKey])return _covMemo[_memoKey]; // memo: identical extra-sets (common in Slow's rounds + polish) are never re-solved
     const pool=xiPool.concat(singlePool,extra.map(c=>Object.assign({},c,{hold:null})));
     const r2=solveBest(form,pool,remainingCap,getRatingCeil());
     _benchNodeAcc+=(r2&&r2.nodes)||0;
@@ -5798,13 +6349,36 @@ function computeBenchPicks(tie,form,mode){
     // almost every call. That per-call truncation is NOT the same as the overall bench search running
     // out of budget, so it must not set _bcapped on its own. Only mark the search as truly capped once
     // the running total has actually reached the overall bench budget.
+    // v15.0 exception: in slow mode the sub-solve got the full remaining budget, so ITS capped flag
+    // IS the real thing — the guarantee is void the moment any combo's tie-set may be incomplete.
+    if(mode==='slow'&&r2&&r2.capped)_bcapped=true;
     if(_benchNodeAcc-_fnNodeStart>=_benchCap)_bcapped=true;
     _maybeSlowPrompt();                                      // 10M guard now fires on fast/medium too, not just slow
     const xis=(r2&&!r2.error&&r2.bestXIs)?r2.bestXIs:[];
     let c2=0,c1=0;
     for(const e of archReps){let best=0;for(const x of xis){const g=mgrGain(x.sc,e.m);if(g>best){best=g;if(best===2)break;}}if(best===2)c2+=e.w;else if(best>=1)c1+=e.w;} // one check per archetype, counted once per MANAGER of that archetype
-    return {c2,c1};
+    const _cov={c2,c1};
+    if(!_benchAbort&&!(mode==='slow'&&r2&&r2.capped))_covMemo[_memoKey]=_cov; // never cache aborted/void results
+    return _cov;
   }
+  // ---- v15.0 objective: "+2 gamble" (default) vs "best expected" (checkbox) ----
+  // The real game offers 5 managers drawn without replacement (deduped by person) from the manager
+  // DB; you keep the best. Default objective = lexicographic [c2, c1]: maximize the number of
+  // manager PERSONS the bench can rescue to +2, tiebreak +1. P(at least one +2 in your 5 offers)
+  // is strictly monotone in that person-count (hypergeometric), so maximizing the count IS
+  // maximizing the +2 probability — the "gamble for the +2" reading. With the checkbox on, the
+  // key instead maximizes the true EXPECTED manager gain E = P(best=2)*2 + P(best=1)*1
+  //   = P2 + P>=1, where with N managers total, Kc already-clean (+2 regardless of bench),
+  //   P2   = 1 - PnoHit(Kc + c2)   and   P>=1 = 1 - PnoHit(Kc + c2 + c1),
+  //   PnoHit(K) = prod_{i=0..4} (N-K-i)/(N-i)  (5 draws, no replacement).
+  // These can genuinely disagree: +9 rescued-to-+2 with +40 rescued-to-+1 beats +10/+0 on expected
+  // value but loses the pure +2 gamble — the checkbox is exactly that choice.
+  const _mgrN=MANAGER_DB.length;
+  const _mgrClean=MANAGER_DB.filter(m=>!sc.nationSet.has(m.nation)&&!sc.leagueSet.has(m.league)).length;
+  function _pNoHit(K){let p=1;for(let i=0;i<5;i++){const num=_mgrN-K-i,den=_mgrN-i;if(den<=0)break;p*=Math.max(0,num)/den;}return p;}
+  function _covE(cov){const K2=_mgrClean+cov.c2,K1=cov.c1;return (1-_pNoHit(K2))+(1-_pNoHit(K2+K1));}
+  const _evOn=_benchObjEV();
+  function benchKey(cov,tieArr){return (_evOn?[_covE(cov)]:[cov.c2,cov.c1]).concat(tieArr);}
   const fresh=c=>((!sc.nationSet.has(c.nation)?1:0)+(!sc.leagueSet.has(leagueOf(c))?1:0)+((c.type==='normal'&&!sc.clubSet.has(c.club))?1:0));
   const vfTie=c=>{const newNat=!sc.nationSet.has(c.nation),lg=leagueOf(c),newLg=!sc.leagueSet.has(lg),newClub=(c.type==='normal'&&!sc.clubSet.has(c.club));let clash=0;if(newNat)clash+=MANAGER_DB.filter(m=>m.nation===c.nation).length;if(newLg&&!(c.type==='normal'&&lg==='England Premier League'))clash+=MANAGER_DB.filter(m=>m.league===lg).length;return [-clash,c.rating,(newLg?4:0)+(newNat?2:0)+(newClub?1:0),Math.random()];};
   let chosen=[];
@@ -5819,11 +6393,11 @@ function computeBenchPicks(tie,form,mode){
       if(hd.list.length===1)return hd.list[0];
       const ranked=hd.list.slice().sort((a,b)=>_lexGt(vfTie(a),vfTie(b))?-1:1);
       let bc=ranked[0],bk=null;
-      ranked.slice(0,2).forEach(c=>{const cov=coverage([c]);const k=[cov.c2,cov.c1].concat(vfTie(c));if(!bk||_lexGt(k,bk)){bk=k;bc=c;}});
+      ranked.slice(0,2).forEach(c=>{const cov=coverage([c]);const k=benchKey(cov,vfTie(c));if(!bk||_lexGt(k,bk)){bk=k;bc=c;}});
       return bc;});
   }else if(mode==='fast'){
     // each hold scored on its OWN card's coverage (XI + that one card); very-fast keys break ties.
-    chosen=holds.map(hd=>{let bc=hd.list[0],bk=null;hd.list.forEach(c=>{const cov=coverage([c]);const k=[cov.c2,cov.c1].concat(vfTie(c));if(!bk||_lexGt(k,bk)){bk=k;bc=c;}});_unitsDone++;return bc;});
+    chosen=holds.map(hd=>{let bc=hd.list[0],bk=null;hd.list.forEach(c=>{const cov=coverage([c]);const k=benchKey(cov,vfTie(c));if(!bk||_lexGt(k,bk)){bk=k;bc=c;}});_unitsDone++;return bc;});
   }else if(mode==='medium'){
     // ordered marginal coverage: each round commit the hold whose best card adds the most NEW coverage
     // on top of what's already chosen (catches some complementarity a flat per-hold pass misses).
@@ -5837,7 +6411,7 @@ function computeBenchPicks(tie,form,mode){
       for(let hi=0;hi<remaining.length;hi++){
         for(const c of remaining[hi].list){
           const cov=coverage(chosenSet.concat([c]));
-          const k=[cov.c2,cov.c1].concat(vfTie(c));
+          const k=benchKey(cov,vfTie(c));
           if(bk===null||_lexGt(k,bk)){bk=k;bh=hi;bc=c;}
           if(_benchAbort)break outer;                      // user stop is NOT a cap
           if(_benchNodeAcc-_loopStart>=_benchCap){_bcapped=true;break outer;}
@@ -5864,7 +6438,7 @@ function computeBenchPicks(tie,form,mode){
       if(_benchAbort)break;
       const cov=coverage(combo);
       _combosChecked++;
-      const key=[cov.c2,cov.c1,combo.reduce((a,c)=>a+c.rating,0),combo.reduce((a,c)=>a+fresh(c),0)];
+      const key=benchKey(cov,[combo.reduce((a,c)=>a+c.rating,0),combo.reduce((a,c)=>a+fresh(c),0)]);
       if(!best||_lexGt(key,best.key))best={combo,key};
       if(_benchAbort)break;                                // user stop is NOT a cap
       if(_benchNodeAcc-_loopStart>=_benchCap){_bcapped=true;break;}
@@ -6117,7 +6691,7 @@ function _pickPanelSuffixes(picks,holdGroups){
     ?'<div class="tiny">'+r.bestXIs.length+' squads tie at '+sc.total+'. Default frees the most managers for +2 \u2014 this one keeps <b>'+cleanMgrs+'</b> clean of '+MANAGER_DB.length+'.</div>'
     :'<div class="tiny">'+cleanMgrs+' of '+MANAGER_DB.length+' managers give a clean +2 on this XI.</div>')+_mgrDepth+sw;
   const _divTxt=r.diversity?(' \u00b7 diversity: '+r.diversity.label+(r.diversity.provenComplete?' (completed \u2014 proven optimal)':'')):'';
-  const _parTxt=r.parallel?(' \u00b7 parallel \u00d7'+r.parallel.workers+' (beta)'):'';
+  const _parTxt=r.parallel?(' \u00b7 parallel \u00d7'+r.parallel.workers):'';
   $('#solveOut').innerHTML=
   '<div class="summary"><div class="bigrow"><div class="tot">'+sc.total+'<small>PRE-MANAGER \u00b7 UP TO '+(sc.total+2)+' WITH MANAGER (+2)</small></div>'
     +'<div class="rc"><div><div class="b" style="color:var(--cyan)">'+sc.rating+'</div><div class="l">RATING</div></div>'
@@ -6607,11 +7181,17 @@ function reorderDropdownLists(){
 // used for scoring here — the simpler weight approach is more predictable and tunable.)
 // Score = sum of FW[slot] for all 11 slots, stored as a per-slot average for display.
 function recomputeFormScores(){
+  const calOn=(typeof _formCalActive==='function')&&_formCalActive(); // v15.0: calibrated gold-sim ranking supersedes FW when on
   FORMS.forEach(f=>{
     if(f.name==='Custom')return;
-    const total=f.slots.reduce((s,p)=>s+(FW[p]||0),0);
-    f.score=Math.round(total/f.slots.length*100)/100;
+    if(calOn&&FORM_CAL.values[f.name]!==undefined){
+      f.score=FORM_CAL.values[f.name]; // solver-graded average best-XI from the gold-pool simulation
+    }else{
+      const total=f.slots.reduce((s,p)=>s+(FW[p]||0),0);
+      f.score=Math.round(total/f.slots.length*100)/100;
+    }
   });
+  if(typeof _fcalGrayFW==='function')_fcalGrayFW(calOn);
   const grid=document.getElementById('fgrid');
   if(grid)try{sortForm(grid.dataset.m||'rank');}catch(e){}
 }
@@ -7222,6 +7802,192 @@ async function _calibrateNoHoldAsync(db,forms,opts,onProgress){
   }
   return{hash,seed,weights:best,trainMean:cur,holdMean:_calMean(hold,_calMakeScorer(best)),nScripts:scripts.length,K,date:new Date().toISOString().slice(0,10)};
 }
+
+// ============================ v15.0 FORMATION CALIBRATOR ============================
+// Replaces the subjective per-position FW weights with an OBJECTIVE, analytic ranking. No draft is
+// simulated and fillability is irrelevant — every formation has 11 slots and can always be filled.
+// What actually separates shapes is WHICH POSITIONS HOLD THE BEST CARDS, judged by the same
+// objective card weights the no-hold calibrator already fits (+ rarity).
+//
+// Why the Gold DB: the main playerDB lists every card with ALL its playable positions (Salah as
+// RW/RM/CAM...), so it can't tell you where a player is most likely to actually appear. The embedded
+// GOLD_DB carries each player's TRUE PRIMARY position only (the leftmost in-game position) — the
+// position at which you're most likely to draft them. So a primary-CDM star like Caicedo counts
+// toward CDM slots, NOT CM slots. This is the exact blind spot older systems had: they scored a
+// CM/CDM card and a CDM/CM card identically, when their primary positions (and thus which formation
+// they strengthen) differ. We dedupe golds through the live playerDB by name (one entry per person,
+// highest-rated copy wins), falling back to the gold's own nation/club when a name isn't in the DB.
+const _FORMCAL_KEY='pacwyn_formcal_v1';
+var FORM_CAL=null; // {values:{formName:perSlotScore}, source, date} — var (not let) so recomputeFormScores(), which runs at load BEFORE this line, sees `undefined` (falsy) rather than a TDZ throw
+(function restoreFormCal(){try{const raw=localStorage.getItem(_FORMCAL_KEY);if(raw){const s=JSON.parse(raw);if(s&&s.values)FORM_CAL=s;}}catch(e){}})();
+
+// Build the gold-primary-position pool, deduped by person through the live DB.
+function _buildGoldPool(){
+  if(typeof GOLD_DB==='undefined'||!GOLD_DB.length)return [];
+  // index the live DB by name once, to canonicalise nation/league/club where we can
+  const dbByName={};
+  for(const c of playerDB){ if(!dbByName[c.name])dbByName[c.name]=c; }
+  const byPerson={};
+  for(const g of GOLD_DB){
+    const prev=byPerson[g.n];
+    if(!prev||g.rat>prev.rat)byPerson[g.n]={n:g.n,nat:g.nat,club:g.club,pos:g.pos,rat:g.rat};
+  }
+  const pool=[];
+  let _gid=1;
+  for(const k in byPerson){
+    const g=byPerson[k];const m=dbByName[g.n];
+    // TEMPORARY: we don't have a confirmed true primary position for every player yet, so any
+    // gold entry missing `pos` is skipped rather than guessed at. Remove this guard once GOLD_DB
+    // is fully backfilled with primary positions for every entry.
+    if(!g.pos)continue;
+    pool.push({
+      id:_gid++, label:g.n,                              // solveBest tracks distinct cards by id; label is for display only
+      name:g.n, rating:g.rat, type:'normal',
+      nation:g.nat||(m&&m.nation)||'', // gold is authoritative; live DB only fills a blank
+      league:(m&&m.league)||'England Premier League', // all golds are PL; take the live DB's exact spelling when matched
+      club:g.club||(m&&m.club)||'',
+      pos:[normPos(g.pos)]                              // TRUE primary position ONLY — the whole point of the gold pool
+    });
+  }
+  return pool;
+}
+// A calibration is only meaningful if every position some formation needs is actually stocked in
+// the pool (a single ST card can't populate 25-card draws). Uses the outfield need only; GK is
+// handled the same as any other position (the pool has GKs).
+// Objective value of ONE card, using the no-hold calibrated per-factor weights but with each
+// boolean "is this a NEW nation/league/club" replaced by its RARITY (the probability that factor
+// actually fires on a real squad). This is the key: the no-hold weights say what a new-nation slot
+// is WORTH; rarity says how LIKELY this specific card is to be that new-nation slot. A rare nation
+// (Ecuador) is almost always new, so it earns nearly the full newNat weight; a common one (England)
+// rarely is, so it earns little. That makes the score "how valuable is this card in expectation",
+// which is exactly the currency that should decide which POSITIONS hold the best players.
+function _fcalCardValue(c,w){
+  let v=w.rating*c.rating;
+  v+=w.newNat*rarityNat(c.nation);
+  const lg=leagueOf(c);
+  v+=w.newLg*rarityLg(lg);
+  if(c.type==='normal')v+=w.newClub*clubRare(c.club);
+  if(c.type==='normal'||(c.type==='hero'&&c.league==='England Premier League'))v+=w.prem;
+  if(c.type==='icon'||c.type==='hero')v+=w.iconHero;
+  if(c.type==='icon')v+=w.firstIcon;
+  if(c.type==='hero')v+=w.firstHero;
+  return v;
+}
+// Analytic formation ranking — NO draft simulation, NO fillability. Every formation fills 11 slots
+// either way; what differs is which positions those slots sit at, and therefore WHICH PLAYERS the
+// draft is likely to hand you. Steps:
+//   1. value every deduped Gold player with _fcalCardValue (calibrated weights x rarity),
+//   2. bucket players by TRUE PRIMARY position and sort each bucket by value,
+//   3. positional value = a rank-decayed weighted average of the top X values at that position
+//      (X = user knob, uncapped besides the bucket's own size). Rank 1 carries full weight, rank 2
+//      carries _FCAL_DECAY as much, rank 3 that squared, etc. — so a deep X keeps adding real signal
+//      from a position's bench strength without ever letting the 30th-best card matter as much as
+//      the best one. This is what makes a large X safe/meaningful instead of just flattening
+//      everything into a plain top-K mean.
+//   4. formation score = sum of its 11 slots' positional values / 11 (per-slot scale, comparable
+//      to the old FW scores' scale convention). Duplicate slots (2xCM) count the positional value
+//      once per slot: each slot is its own independent chance at that position's best cards.
+// So if Xhaka (rare Switzerland, Sunderland) and Caicedo (rare Ecuador) are the highest-value
+// players and both are PRIMARY CDM, formations with CDM slots rise — while a CM slot gains nothing
+// from them, exactly the CM/CDM-vs-CDM/CM distinction older systems collapsed.
+const _FCAL_DECAY=0.85; // per-rank weight multiplier; rank i (0-indexed) weighs _FCAL_DECAY^i
+function _fcalibrateAnalytic(pool,forms,w,topX){
+  const byPos={};
+  for(const c of pool){const p=c.pos[0];(byPos[p]||(byPos[p]=[])).push({v:_fcalCardValue(c,w),n:c.name});}
+  const posVal={},posTop={};
+  for(const p in byPos){
+    byPos[p].sort((a,b)=>b.v-a.v);
+    const k=Math.min(topX,byPos[p].length);
+    let wSum=0,vSum=0;
+    for(let i=0;i<k;i++){const wt=Math.pow(_FCAL_DECAY,i);wSum+=wt;vSum+=wt*byPos[p][i].v;}
+    posVal[p]=Math.round(vSum/wSum*100)/100;
+    const shown=Math.min(k,10); // display list stays readable regardless of how deep X goes
+    posTop[p]=byPos[p].slice(0,shown).map(e=>e.n+' ('+e.v.toFixed(1)+')');
+  }
+  const values={};
+  forms.filter(f=>f.name!=='Custom').forEach(f=>{
+    let total=0;for(const p of f.slots)total+=(posVal[p]||0);
+    values[f.name]=Math.round(total/f.slots.length*100)/100;
+  });
+  return {values,posVal,posTop};
+}
+// Active whenever a calibration result exists — no separate on/off checkbox; Clear turns it off.
+function _formCalActive(){return !!(FORM_CAL&&FORM_CAL.values);}
+// Gray the manual FW grid while the calibrated ranking owns f.score (parallels _calGrayManual).
+function _fcalGrayFW(on){const g=$('#fwGrid');if(g){g.style.opacity=on?'0.4':'';g.style.pointerEvents=on?'none':'';g.querySelectorAll('input,button').forEach(i=>{i.disabled=on;});}}
+
+// ---- formation-cal UI glue ----
+function _renderFormCalResult(){
+  const box=$('#formCalResult');
+  _fcalGrayFW(_formCalActive());
+  if(!box)return;
+  if(!FORM_CAL||!FORM_CAL.values){box.innerHTML='';return;}
+  const ranked=Object.entries(FORM_CAL.values).sort((a,b)=>b[1]-a[1]);
+  const top=ranked.slice(0,3).map(([n,v])=>n+' ('+v.toFixed(2)+')').join(', ');
+  const bot=ranked.slice(-3).map(([n,v])=>n+' ('+v.toFixed(2)+')').join(', ');
+  let posHtml='';
+  if(FORM_CAL.posVal){
+    const posRanked=Object.entries(FORM_CAL.posVal).sort((a,b)=>b[1]-a[1]);
+    posHtml='<details class="hlp" style="margin-top:6px"><summary class="tiny">Per-position values (top '+(FORM_CAL.topX||'?')+' primary-position players each)</summary><div class="tiny" style="color:var(--mut);margin-top:4px">'
+      +posRanked.map(([p,v])=>'<div style="margin:2px 0"><b>'+p+'</b> '+v.toFixed(2)+((FORM_CAL.posTop&&FORM_CAL.posTop[p])?(' \u2014 '+FORM_CAL.posTop[p].join(', ')):'')+'</div>').join('')
+      +'</div></details>';
+  }
+  box.innerHTML='<div class="tiny" style="color:var(--mut)">Calibrated '+FORM_CAL.date+' \u00b7 top '+(FORM_CAL.topX||'?')+' per position \u00b7 weights: '+(FORM_CAL.source||'no-hold calibration')
+    +'<br><b style="color:var(--good)">Best:</b> '+top+'<br><b style="color:var(--warn)">Weakest:</b> '+bot+'</div>'+posHtml;
+}
+function runFormCalibration(){
+  const st=$('#formCalStatus'), btn=$('#formCalBtn');
+  // v15.1: card weights used to be a hard precondition (error + bail if uncalibrated), on the theory
+  // that the user should run + see that step themselves. In practice this just blocks anyone who
+  // wants formation ranking but doesn't want live no-hold pick-time ranking turned on — the two are
+  // independent (formation calibration only ever reads NOHOLD_CAL.weights; it never reads or flips
+  // the "No-hold drafting" checkbox that governs live picking). So now: if the weights aren't fitted
+  // yet, auto-fit them with the same fast default "Calibrate from DB" uses (150 simulated drafts,
+  // auto seed) — quick, and good enough to rank formations by. Anyone who wants a hand-tuned or
+  // larger-sample fit can still run "Calibrate from DB" themselves first; this just removes the
+  // requirement to do so before formations can be ranked at all.
+  if(!(NOHOLD_CAL&&NOHOLD_CAL.weights)){
+    if(st)st.innerHTML='<span style="color:var(--mut)">\u23f3 Card weights aren\u2019t calibrated yet \u2014 fitting them first (quick, ~150 drafts)\u2026</span>';
+    if(btn)btn.disabled=true;
+    const wres=_calibrateNoHold(playerDB,FORMS,{nScripts:150,seed:null});
+    if(wres.error){
+      if(st)st.innerHTML='<span style="color:var(--warn)">\u26a0 '+wres.error+'</span>';
+      if(btn)btn.disabled=false;
+      return;
+    }
+    NOHOLD_CAL=wres;
+    try{localStorage.setItem(_NOHOLD_CAL_KEY,JSON.stringify(wres));}catch(e){}
+    _renderCalResult(); // reflects the auto-fit in the Weights tab too, same as a manual "Calibrate from DB"
+    _recLog&&_recLog('no-hold weights auto-calibrated for formation ranking \u2014 DB '+(wres.hash>>>0).toString(16).slice(0,8));
+  }
+  const xEl=$('#formCalTopX'); let topX=xEl?parseInt(xEl.value,10):15; if(!topX||topX<1||isNaN(topX))topX=15; topX=Math.min(500,topX); if(xEl)xEl.value=topX;
+  const pool=_buildGoldPool();
+  if(!pool.length){if(st)st.innerHTML='<span style="color:var(--warn)">\u26a0 Player pool is empty \u2014 nothing to calibrate from.</span>';return;}
+  if(btn)btn.disabled=true;
+  const t0=performance.now();
+  const r=_fcalibrateAnalytic(pool,FORMS,NOHOLD_CAL.weights,topX);
+  const res={values:r.values,posVal:r.posVal,posTop:r.posTop,topX,source:'no-hold cal \u00b7 DB '+(NOHOLD_CAL.hash>>>0).toString(16).slice(0,8),date:new Date().toISOString().slice(0,10)};
+  FORM_CAL=res;
+  try{localStorage.setItem(_FORMCAL_KEY,JSON.stringify(res));}catch(e){}
+  const ms=Math.max(1,Math.round(performance.now()-t0));
+  if(st)st.innerHTML='<span style="color:var(--good)">\u2714 Done in '+ms+' ms across '+pool.length+' players.</span>';
+  if(btn)btn.disabled=false;
+  recomputeFormScores();
+  _renderFormCalResult();
+  _recLog&&_recLog('formations calibrated \u2014 primary positions \u00b7 top'+topX+' \u00b7 '+res.source);
+}
+function clearFormCalibration(){
+  FORM_CAL=null;
+  try{localStorage.removeItem(_FORMCAL_KEY);}catch(e){}
+  const st=$('#formCalStatus');if(st)st.innerHTML='<span style="color:var(--mut)">Cleared \u2014 manual formation weights back in charge.</span>';
+  recomputeFormScores();
+  _renderFormCalResult();
+}
+// Reflect whatever calibration was restored from storage at load.
+(function initFormCal(){
+  try{recomputeFormScores();}catch(e){}
+  try{_renderFormCalResult();}catch(e){}
+})();
 
 // ---- UI glue ----
 // v13.4.1: starterBoost/benchPenalty (in the misc SHAPE group) are the one pair of manual weights
